@@ -51,6 +51,13 @@ public class FieldDef {
     @Column(name = "sort_order")
     private int sortOrder = 0;
 
+    // 2D 그리드 위치 좌표 (행/열 0-기반 인덱스)
+    @Column(name = "row_pos")
+    private int rowPos = 0;
+
+    @Column(name = "col_pos")
+    private int colPos = 0;
+
     @Column(name = "readonly_yn", length = 1)
     private String readonlyYn = "N";
 
@@ -76,9 +83,15 @@ public class FieldDef {
         this.sortOrder = sortOrder;
     }
 
+    public void updatePosition(int rowPos, int colPos) {
+        this.rowPos = rowPos;
+        this.colPos = colPos;
+    }
+
     public void updateAll(String fieldNm, String fieldLabel, String fieldType,
                           String placeholder, String defaultValue, int colSpan, int sortOrder,
-                          String readonlyYn, String hiddenYn, String codeGroup, String extraConfig) {
+                          String readonlyYn, String hiddenYn, String codeGroup, String extraConfig,
+                          int rowPos, int colPos) {
         this.fieldNm = fieldNm;
         this.fieldLabel = fieldLabel;
         this.fieldType = fieldType;
@@ -90,5 +103,7 @@ public class FieldDef {
         this.hiddenYn = hiddenYn;
         this.codeGroup = codeGroup;
         this.extraConfig = extraConfig;
+        this.rowPos = rowPos;
+        this.colPos = colPos;
     }
 }

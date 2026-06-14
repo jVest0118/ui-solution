@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.Comparator;
 
 @Service
 @RequiredArgsConstructor
@@ -43,14 +44,14 @@ public class ScreenAdminService {
 
     @Transactional
     public Map<String, Object> saveScreen(Map<String, Object> req, String userId) {
-        String screenId   = (String) req.get("screenId");
-        String screenNm   = (String) req.get("screenNm");
-        String screenType = (String) req.get("screenType");
+        String screenId    = (String) req.get("screenId");
+        String screenNm    = (String) req.get("screenNm");
+        String screenType  = (String) req.get("screenType");
         String description = (String) req.get("description");
         String apiResource = (String) req.get("apiResource");
         String layoutConfig = (String) req.get("layoutConfig");
         String buttonConfig = (String) req.get("buttonConfig");
-        String projectId  = (String) req.get("projectId");
+        String projectId   = (String) req.get("projectId");
 
         ScreenDef screen = screenDefRepository.findById(screenId)
                 .map(s -> { s.update(screenNm, screenType, description, apiResource, layoutConfig, buttonConfig); return s; })
@@ -80,7 +81,9 @@ public class ScreenAdminService {
         result.put("buttonConfig", screen.getButtonConfig());
         result.put("projectId",   screen.getProjectId());
         result.put("version",     screen.getVersion());
-        result.put("fields", screen.getFields().stream().map(this::fieldToMap).collect(Collectors.toList()));
+        result.put("fields", screen.getFields().stream()
+                .sorted(Comparator.comparingInt(FieldDef::getRowPos).thenComparingInt(FieldDef::getColPos))
+                .map(this::fieldToMap).collect(Collectors.toList()));
         return result;
     }
 
@@ -93,19 +96,28 @@ public class ScreenAdminService {
         Long fieldId = fieldIdObj != null ? ((Number) fieldIdObj).longValue() : null;
 
         if (fieldId != null) {
-            // 기존 필드 수정
             screen.getFields().stream()
                     .filter(f -> f.getFieldId().equals(fieldId))
                     .findFirst()
                     .ifPresent(f -> updateField(f, req));
         } else {
-            // 신규 필드 추가
+            // 신규 필드: rowPos/colPos가 없으면 마지막 행 다음 열에 자동 배치
+            if (!req.containsKey("rowPos") || !req.containsKey("colPos")) {
+                int maxRow = screen.getFields().stream().mapToInt(FieldDef::getRowPos).max().orElse(-1);
+                req = new LinkedHashMap<>(req);
+                req.put("rowPos", maxRow + 1);
+                req.put("colPos", 0);
+            }
             FieldDef field = buildField(screen, req);
             screen.getFields().add(field);
         }
 
+        // 저장 후 최신 필드 목록을 응답에 포함 (프론트에서 즉시 반영하기 위해)
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("screenId", screenId);
+        result.put("fields", screen.getFields().stream()
+                .sorted(Comparator.comparingInt(FieldDef::getRowPos).thenComparingInt(FieldDef::getColPos))
+                .map(this::fieldToMap).collect(Collectors.toList()));
         return result;
     }
 
@@ -128,6 +140,17 @@ public class ScreenAdminService {
         }
     }
 
+    /** 필드를 2D 그리드의 특정 위치로 이동 */
+    @Transactional
+    public void moveField(String screenId, Long fieldId, int rowPos, int colPos) {
+        ScreenDef screen = screenDefRepository.findWithFieldsAndRules(screenId)
+                .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
+        screen.getFields().stream()
+                .filter(f -> f.getFieldId().equals(fieldId))
+                .findFirst()
+                .ifPresent(f -> f.updatePosition(rowPos, colPos));
+    }
+
     private Map<String, Object> fieldToMap(FieldDef f) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("fieldId",    f.getFieldId());
@@ -138,7 +161,10 @@ public class ScreenAdminService {
         m.put("placeholder", f.getPlaceholder());
         m.put("defaultValue", f.getDefaultValue());
         m.put("colSpan",    f.getColSpan());
+        m.put("rowSpan",    f.getRowSpan());
         m.put("sortOrder",  f.getSortOrder());
+        m.put("rowPos",     f.getRowPos());
+        m.put("colPos",     f.getColPos());
         m.put("readonlyYn", f.getReadonlyYn());
         m.put("hiddenYn",   f.getHiddenYn());
         m.put("codeGroup",  f.getCodeGroup());
@@ -165,6 +191,11 @@ public class ScreenAdminService {
         try { return objectMapper.writeValueAsString(obj); } catch (Exception e) { return null; }
     }
 
+    private int getInt(Map<String, Object> req, String key, int def) {
+        Object v = req.get(key);
+        return v != null ? ((Number) v).intValue() : def;
+    }
+
     private FieldDef buildField(ScreenDef screen, Map<String, Object> req) {
         return FieldDef.builder()
                 .screenDef(screen)
@@ -174,8 +205,10 @@ public class ScreenAdminService {
                 .inputType((String) req.get("inputType"))
                 .placeholder((String) req.get("placeholder"))
                 .defaultValue((String) req.get("defaultValue"))
-                .colSpan(req.containsKey("colSpan") ? ((Number) req.get("colSpan")).intValue() : 1)
-                .sortOrder(req.containsKey("sortOrder") ? ((Number) req.get("sortOrder")).intValue() : 0)
+                .colSpan(getInt(req, "colSpan", 1))
+                .sortOrder(getInt(req, "sortOrder", 0))
+                .rowPos(getInt(req, "rowPos", 0))
+                .colPos(getInt(req, "colPos", 0))
                 .readonlyYn((String) req.getOrDefault("readonlyYn", "N"))
                 .hiddenYn((String) req.getOrDefault("hiddenYn", "N"))
                 .codeGroup((String) req.get("codeGroup"))
@@ -190,12 +223,14 @@ public class ScreenAdminService {
                 (String) req.getOrDefault("fieldType", "text"),
                 (String) req.get("placeholder"),
                 (String) req.get("defaultValue"),
-                req.containsKey("colSpan") ? ((Number) req.get("colSpan")).intValue() : f.getColSpan(),
-                req.containsKey("sortOrder") ? ((Number) req.get("sortOrder")).intValue() : f.getSortOrder(),
+                getInt(req, "colSpan", f.getColSpan()),
+                getInt(req, "sortOrder", f.getSortOrder()),
                 (String) req.getOrDefault("readonlyYn", f.getReadonlyYn()),
                 (String) req.getOrDefault("hiddenYn", f.getHiddenYn()),
                 (String) req.get("codeGroup"),
-                req.containsKey("extraConfig") ? toJson(req.get("extraConfig")) : f.getExtraConfig()
+                req.containsKey("extraConfig") ? toJson(req.get("extraConfig")) : f.getExtraConfig(),
+                getInt(req, "rowPos", f.getRowPos()),
+                getInt(req, "colPos", f.getColPos())
         );
     }
 

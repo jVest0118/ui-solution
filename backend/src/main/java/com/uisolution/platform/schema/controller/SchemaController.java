@@ -71,6 +71,18 @@ public class SchemaController {
         return ApiResponse.ok(null);
     }
 
+    /** 필드 2D 위치 이동 (그리드 드래그앤드랍) */
+    @PutMapping("/admin/screens/{screenId}/fields/{fieldId}/move")
+    public ApiResponse<Void> moveField(
+            @PathVariable String screenId,
+            @PathVariable Long fieldId,
+            @RequestBody Map<String, Integer> pos) {
+        screenAdminService.moveField(screenId, fieldId,
+                pos.getOrDefault("rowPos", 0),
+                pos.getOrDefault("colPos", 0));
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/admin/fields/suggestions/name")
     public ApiResponse<List<String>> fieldNameSuggestions(
             @RequestParam(required = false) String q) {

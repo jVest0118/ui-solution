@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Form, Row, Col, Button, Space, Spin, Alert, message,
+  Row, Col, Button, Space, Spin, Alert, message,
   Table, Input, Divider, Popconfirm, Typography, Card, Modal
 } from 'antd'
 import {
@@ -26,7 +26,28 @@ interface Props {
   onSelect?: (row: Record<string, unknown>) => void
 }
 
-// ─── 코드옵션 로더 (단일 그룹) ───────────────────────────────
+// layoutConfig를 JSON 파싱 (문자열 또는 객체 모두 처리)
+function getLayoutConfig(cfg: unknown): Record<string, unknown> {
+  if (!cfg) return {}
+  if (typeof cfg === 'string') { try { return JSON.parse(cfg) } catch { return {} } }
+  return cfg as Record<string, unknown>
+}
+
+// rowPos 기준으로 필드를 그룹핑 (2D 그리드: rowPos → 정렬된 필드 배열)
+function groupByRowPos(fields: FieldDef[]): Map<number, FieldDef[]> {
+  const map = new Map<number, FieldDef[]>()
+  for (const f of fields) {
+    const row = f.rowPos ?? 0
+    if (!map.has(row)) map.set(row, [])
+    map.get(row)!.push(f)
+  }
+  for (const rowFields of map.values()) {
+    rowFields.sort((a, b) => (a.colPos ?? 0) - (b.colPos ?? 0))
+  }
+  return map
+}
+
+// ─── 코드옵션 로더 ────────────────────────────────────────────
 const CodeOptionsLoader: React.FC<{
   groupCd: string
   onLoaded: (groupCd: string, options: { value: string; label: string }[]) => void
@@ -40,15 +61,14 @@ const CodeOptionsLoader: React.FC<{
   return null
 }
 
-// ─── 폼 내부 컴포넌트 ────────────────────────────────────────
+// ─── 폼 내부 (표 레이아웃) ───────────────────────────────────
 const FormBody: React.FC<{
   schema: ScreenSchema
   screenId: string
   initialValues?: Record<string, unknown>
   onSuccess?: (data: unknown) => void
-  cols?: number
   compact?: boolean
-}> = ({ schema, screenId, initialValues = {}, onSuccess, cols = 2, compact }) => {
+}> = ({ schema, screenId, initialValues = {}, onSuccess, compact }) => {
   const [values, setValues] = useState<Record<string, unknown>>(initialValues)
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -103,77 +123,130 @@ const FormBody: React.FC<{
   }
 
   const handleReset = () => { setValues({}); setErrors({}) }
+
   const visibleFields = schema.fields.filter(f => !f.hidden)
-  const colUnit = Math.floor(24 / cols)
+  const layoutCfg = getLayoutConfig(schema.layoutConfig)
+  const formCols = (layoutCfg.formCols as number) ?? 1
+
+  // rowPos → colPos 정렬된 필드 맵
+  const rowsByPos = groupByRowPos(visibleFields)
+  const sortedRowNums = [...rowsByPos.keys()].sort((a, b) => a - b)
+
+  // 표 셀 스타일
+  const thStyle: React.CSSProperties = {
+    background: '#fafafa',
+    border: '1px solid #e8e8e8',
+    padding: '10px 14px',
+    fontWeight: 600,
+    fontSize: 13,
+    color: '#333',
+    verticalAlign: 'middle',
+    whiteSpace: 'nowrap',
+    width: formCols > 1 ? '120px' : '140px',
+  }
+
+  const tdStyle: React.CSSProperties = {
+    border: '1px solid #e8e8e8',
+    padding: '8px 12px',
+    verticalAlign: 'middle',
+  }
 
   return (
     <>
       {uniqueGroups.map(g => <CodeOptionsLoader key={g} groupCd={g} onLoaded={handleCodeLoaded} />)}
-      <Form
+      <form
         id={formId}
-        layout="vertical"
-        noValidate
         aria-label={schema.screenNm}
         role="form"
+        noValidate
+        onSubmit={e => { e.preventDefault(); handleSave() }}
       >
-        <Row gutter={[16, 0]}>
-          {visibleFields.map(field => {
-            const fieldError = errors[field.fieldNm]
-            const errorId = `${field.fieldNm}-error`
-            const isRequired = field.validationRules.some(r => r.ruleType === 'required')
-            return (
-              <Col
-                key={field.fieldId}
-                xs={24}
-                sm={24}
-                md={Math.min(colUnit * (field.colSpan || 1), 24)}
-              >
-                <Form.Item
-                  label={
-                    <label htmlFor={`${formId}-${field.fieldNm}`}>
-                      {field.fieldLabel}
-                      {isRequired && <span aria-hidden="true" style={{ color: '#ff4d4f', marginLeft: 4 }}>*</span>}
-                    </label>
-                  }
-                  required={isRequired}
-                  validateStatus={fieldError ? 'error' : ''}
-                  help={fieldError ? <span id={errorId} role="alert">{fieldError}</span> : null}
-                >
-                  <FieldRenderer
-                    field={field}
-                    value={values[field.fieldNm]}
-                    onChange={handleChange}
-                    error={fieldError}
-                    codeOptions={field.codeGroup ? (codeMap[field.codeGroup] ?? []) : []}
-                    formValues={values}
-                    onSetError={handleSetError}
-                  />
-                </Form.Item>
-              </Col>
-            )
-          })}
-        </Row>
+        {/* ─ 표 형식 폼 레이아웃 (rowPos/colPos 기반 2D 배치) ─ */}
+        <table
+          style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}
+          role="presentation"
+        >
+          <tbody>
+            {sortedRowNums.map(rowNum => {
+              const rowFields = rowsByPos.get(rowNum)!
+              // 이 행에서 colPos → 필드 맵 (슬롯 점유 계산)
+              const slotMap = new Map<number, FieldDef>()
+              for (const f of rowFields) slotMap.set(f.colPos ?? 0, f)
+
+              const cells: React.ReactNode[] = []
+              let col = 0
+              while (col < formCols) {
+                const field = slotMap.get(col)
+                if (field) {
+                  const span = Math.min(field.colSpan || 1, formCols - col)
+                  // th는 1 HTML 열, td는 2*span-1 HTML 열 (다음 슬롯들의 th+td 포함)
+                  const tdColSpan = span > 1 ? 2 * span - 1 : 1
+                  const fieldError = errors[field.fieldNm]
+                  const isRequired = field.validationRules.some(r => r.ruleType === 'required')
+                  cells.push(
+                    <th key={`th-${field.fieldId}`} scope="row" style={thStyle}>
+                      <label htmlFor={`${formId}-${field.fieldNm}`}>
+                        {field.fieldLabel}
+                        {isRequired && (
+                          <span aria-hidden="true" style={{ color: '#ff4d4f', marginLeft: 3 }}>*</span>
+                        )}
+                      </label>
+                    </th>,
+                    <td
+                      key={`td-${field.fieldId}`}
+                      colSpan={tdColSpan}
+                      style={{ ...tdStyle, background: fieldError ? '#fff2f0' : undefined }}
+                    >
+                      <FieldRenderer
+                        field={field}
+                        value={values[field.fieldNm]}
+                        onChange={handleChange}
+                        error={fieldError}
+                        codeOptions={field.codeGroup ? (codeMap[field.codeGroup] ?? []) : []}
+                        formValues={values}
+                        onSetError={handleSetError}
+                      />
+                      {fieldError && (
+                        <div role="alert" style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>
+                          {fieldError}
+                        </div>
+                      )}
+                    </td>,
+                  )
+                  col += span
+                } else {
+                  // 빈 슬롯
+                  cells.push(
+                    <th key={`empty-th-${rowNum}-${col}`} style={thStyle} />,
+                    <td key={`empty-td-${rowNum}-${col}`} style={tdStyle} />,
+                  )
+                  col++
+                }
+              }
+
+              return <tr key={rowNum}>{cells}</tr>
+            })}
+          </tbody>
+        </table>
+
+        {/* ─ 버튼 영역 ─ */}
         {!compact && (
-          <Row justify="center" style={{ marginTop: 16 }}>
-            <Space>
-              {(schema.canCreate || schema.canUpdate) && (
-                <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={submitting}>
-                  {editId ? '수정' : '저장'}
-                </Button>
-              )}
-              <Button icon={<ReloadOutlined />} onClick={handleReset}>초기화</Button>
-            </Space>
-          </Row>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
+            {(schema.canCreate || schema.canUpdate) && (
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={submitting}>
+                {editId ? '수정' : '저장'}
+              </Button>
+            )}
+            <Button icon={<ReloadOutlined />} onClick={handleReset}>초기화</Button>
+          </div>
         )}
         {compact && (
-          <Row justify="end" style={{ marginTop: 8 }}>
-            <Space>
-              <Button onClick={handleReset}>취소</Button>
-              <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={submitting}>저장</Button>
-            </Space>
-          </Row>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <Button onClick={handleReset}>취소</Button>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={submitting}>저장</Button>
+          </div>
         )}
-      </Form>
+      </form>
     </>
   )
 }
@@ -325,29 +398,25 @@ const FormRenderer: React.FC<{
   screenId: string
   initialValues?: Record<string, unknown>
   onSuccess?: (data: unknown) => void
-}> = ({ schema, screenId, initialValues, onSuccess }) => {
-  const cols = (schema.layoutConfig as Record<string, number> | undefined)?.columns ?? 2
-  return (
-    <div style={{ padding: 24 }}>
-      <Title level={4} style={{ marginBottom: 20 }}>{schema.screenNm}</Title>
-      <FormBody schema={schema} screenId={screenId} initialValues={initialValues} onSuccess={onSuccess} cols={cols} />
-    </div>
-  )
-}
+}> = ({ schema, screenId, initialValues, onSuccess }) => (
+  <div style={{ padding: 24 }}>
+    <Title level={4} style={{ marginBottom: 20 }}>{schema.screenNm}</Title>
+    <FormBody schema={schema} screenId={screenId} initialValues={initialValues} onSuccess={onSuccess} />
+  </div>
+)
 
 // ─── Master-Detail 렌더러 ─────────────────────────────────────
 const MasterDetailRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = ({ schema, screenId }) => {
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null)
-  const cols = (schema.layoutConfig as Record<string, number> | undefined)?.columns ?? 2
 
   return (
     <div>
       <GridRenderer schema={schema} screenId={screenId} onSelect={setSelectedRow} />
       {selectedRow && (
         <>
-          <Divider style={{ margin: '0 0 0 0' }} />
+          <Divider style={{ margin: 0 }} />
           <Card title="상세 정보" style={{ margin: '0 24px 24px' }}>
-            <FormBody schema={schema} screenId={screenId} initialValues={selectedRow} compact cols={cols}
+            <FormBody schema={schema} screenId={screenId} initialValues={selectedRow} compact
               onSuccess={() => setSelectedRow(null)} />
           </Card>
         </>

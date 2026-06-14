@@ -32,6 +32,8 @@ export interface FieldDef {
   colSpan: number
   rowSpan: number
   sortOrder: number
+  rowPos: number
+  colPos: number
   readonly: boolean
   hidden: boolean
   codeGroup?: string

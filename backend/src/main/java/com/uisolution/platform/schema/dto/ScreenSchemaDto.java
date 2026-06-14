@@ -44,6 +44,8 @@ public class ScreenSchemaDto {
         private int colSpan;
         private int rowSpan;
         private int sortOrder;
+        private int rowPos;
+        private int colPos;
         private boolean readonly;
         private boolean hidden;
         private String codeGroup;
@@ -117,6 +119,8 @@ public class ScreenSchemaDto {
                 .colSpan(field.getColSpan())
                 .rowSpan(field.getRowSpan())
                 .sortOrder(field.getSortOrder())
+                .rowPos(field.getRowPos())
+                .colPos(field.getColPos())
                 .readonly("Y".equals(field.getReadonlyYn()))
                 .hidden("Y".equals(field.getHiddenYn()))
                 .codeGroup(field.getCodeGroup())
