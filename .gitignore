@@ -1,0 +1,44 @@
+# ─── Java / Spring Boot ───────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# ─── H2 Database files ────────────────────────────────────────
+backend/data/
+
+# ─── Logs ─────────────────────────────────────────────────────
+*.log
+backend/run.log
+backend/run-err.log
+
+# ─── Node / React ─────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+.npm
+
+# ─── IDE / Editor ─────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+
+# ─── Environment secrets ──────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+
+# ─── OS ───────────────────────────────────────────────────────
+desktop.ini
