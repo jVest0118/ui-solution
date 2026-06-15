@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
-import { Layout, Menu, Button, Avatar, Dropdown, Typography, Tag, Select } from 'antd'
+import { Layout, Menu, Button, Avatar, Dropdown, Typography, Tag, Select, Tabs } from 'antd'
 import {
   MenuFoldOutlined, MenuUnfoldOutlined, LogoutOutlined, UserOutlined, ProjectOutlined
 } from '@ant-design/icons'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import * as Icons from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
+import { useTabStore } from '@/store/tabStore'
 import type { MenuDto } from '@/types/auth'
 
 const { Header, Sider, Content } = Layout
@@ -34,6 +35,7 @@ const buildMenuItems = (menus: MenuDto[]): import('antd').MenuProps['items'] => 
 const AppLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false)
   const { userNm, roles, menus, projects, currentProject, setCurrentProject, logout } = useAuthStore()
+  const { tabs, removeTab } = useTabStore()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -122,6 +124,22 @@ const AppLayout: React.FC = () => {
             </div>
           </Dropdown>
         </Header>
+
+        {/* 탭 바: tab 타입 화면이 하나라도 열리면 표시 */}
+        {tabs.length > 0 && (
+          <div style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', padding: '0 16px' }}>
+            <Tabs
+              type="editable-card"
+              hideAdd
+              size="small"
+              activeKey={location.pathname.replace('/app/', '')}
+              onTabClick={(key) => navigate(`/app/${key}`)}
+              onEdit={(key, action) => { if (action === 'remove') removeTab(String(key)) }}
+              items={tabs.map(t => ({ key: t.screenId, label: t.title, closable: true }))}
+              style={{ marginBottom: 0 }}
+            />
+          </div>
+        )}
 
         <Content style={{ margin: 16, background: '#fff', borderRadius: 8, minHeight: 280 }}>
           <Outlet />

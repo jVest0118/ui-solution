@@ -46,19 +46,24 @@ public class ScreenDef extends BaseEntity {
     @Column(name = "project_id", length = 50)
     private String projectId;
 
+    // 화면 열기 방식: page(일반), tab(탭), popup(팝업)
+    @Column(name = "open_type", length = 20)
+    private String openType = "page";
+
     @OneToMany(mappedBy = "screenDef", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("sortOrder ASC")
     @Builder.Default
     private List<FieldDef> fields = new ArrayList<>();
 
     public void update(String screenNm, String screenType, String description,
-                       String apiResource, String layoutConfig, String buttonConfig) {
+                       String apiResource, String layoutConfig, String buttonConfig, String openType) {
         this.screenNm = screenNm;
         this.screenType = screenType;
         this.description = description;
         this.apiResource = apiResource;
         this.layoutConfig = layoutConfig;
         this.buttonConfig = buttonConfig;
+        this.openType = openType != null ? openType : "page";
         this.version++;
     }
 }

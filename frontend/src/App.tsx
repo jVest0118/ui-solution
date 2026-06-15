@@ -5,6 +5,8 @@ import { ConfigProvider } from 'antd'
 import koKR from 'antd/locale/ko_KR'
 import 'dayjs/locale/ko'
 import dayjs from 'dayjs'
+import { AgGridProvider } from 'ag-grid-react'
+import { AllCommunityModule } from 'ag-grid-community'
 import AppLayout from '@/components/layout/AppLayout'
 import LoginPage from '@/pages/auth/LoginPage'
 import ScreenListPage from '@/pages/admin/ScreenListPage'
@@ -34,6 +36,7 @@ const ScreenRendererPage: React.FC = () => {
 }
 
 const App: React.FC = () => (
+  <AgGridProvider modules={[AllCommunityModule]}>
   <QueryClientProvider client={queryClient}>
     <ConfigProvider locale={koKR}>
       <BrowserRouter>
@@ -68,6 +71,7 @@ const App: React.FC = () => (
       </BrowserRouter>
     </ConfigProvider>
   </QueryClientProvider>
+  </AgGridProvider>
 )
 
 export default App

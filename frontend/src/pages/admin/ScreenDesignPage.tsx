@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react'
 import {
-  Button, Modal, Form, Input, Select, InputNumber,
+  Button, Modal, Form, Input, Select, InputNumber, Switch,
   message, Typography, Card, Row, Col, Divider, Space, Tooltip,
-  Badge, AutoComplete, Collapse, Tabs, Popconfirm, Tag, Checkbox
+  Badge, AutoComplete, Collapse, Tabs, Popconfirm, Tag, Checkbox, Alert
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined,
   ArrowLeftOutlined, InfoCircleOutlined, ThunderboltOutlined,
-  AppstoreAddOutlined, CopyOutlined
+  AppstoreAddOutlined, CopyOutlined, TableOutlined
 } from '@ant-design/icons'
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor,
@@ -20,6 +20,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import api from '@/api/axios'
 import { useAuthStore } from '@/store/authStore'
 import { ScreenRenderer } from '@/components/renderer/ScreenRenderer'
+import { GridFieldConfig } from '@/components/fields/GridFieldConfig'
+import type { GridConfig } from '@/components/fields/GridFieldConfig'
 
 const { Title, Text } = Typography
 
@@ -44,23 +46,42 @@ const safeParseJson = (s: unknown): Record<string, unknown> => {
 
 // ─── 상수 ────────────────────────────────────────────────────
 const FIELD_TYPES = [
-  { value: 'text',     label: 'Text' },
-  { value: 'password', label: 'Password' },
-  { value: 'number',   label: 'Number' },
-  { value: 'date',     label: 'Date' },
-  { value: 'datetime', label: 'DateTime' },
-  { value: 'select',   label: 'Select (공통코드)' },
-  { value: 'radio',    label: 'Radio' },
-  { value: 'checkbox', label: 'Checkbox' },
-  { value: 'textarea', label: 'Textarea' },
-  { value: 'file',     label: 'File Upload' },
-  { value: 'popup',    label: 'Popup Search' },
+  // ─── 입력 필드 ───────────────────────────────
+  { value: 'text',       label: 'Text' },
+  { value: 'password',   label: 'Password' },
+  { value: 'number',     label: 'Number' },
+  { value: 'textarea',   label: 'Textarea (장문)' },
+  // ─── 날짜/기간 ──────────────────────────────
+  { value: 'date',       label: 'Date (날짜)' },
+  { value: 'datetime',   label: 'DateTime (날짜+시간)' },
+  { value: 'year',       label: 'Year (연도)' },
+  { value: 'month',      label: 'Month (연월)' },
+  { value: 'date-range', label: 'Date Range (기간)' },
+  // ─── 선택 ───────────────────────────────────
+  { value: 'select',     label: 'Select (공통코드)' },
+  { value: 'radio',      label: 'Radio' },
+  { value: 'checkbox',   label: 'Checkbox' },
+  // ─── 복합 컴포넌트 ──────────────────────────
+  { value: 'editor',     label: 'Editor (리치 텍스트)' },
+  { value: 'grid',       label: 'Grid (인라인 그리드)' },
+  { value: 'file',       label: 'File Upload' },
+  { value: 'popup',      label: 'Popup Search' },
+  // ─── 표시 전용 ──────────────────────────────
+  { value: 'info-banner', label: 'Info Banner (안내 배너)' },
+  { value: 'stat-card',   label: 'Stat Card (통계 카드)' },
+]
+
+const OPEN_TYPES = [
+  { value: 'page',  label: '일반 페이지' },
+  { value: 'tab',   label: '탭으로 열기' },
+  { value: 'popup', label: '팝업으로 열기' },
 ]
 
 const SCREEN_TYPES = [
   { value: 'form',          label: '입력 폼' },
   { value: 'grid',          label: '그리드 목록' },
   { value: 'master-detail', label: '마스터-디테일' },
+  { value: 'composite',     label: '복합 레이아웃 (섹션)' },
   { value: 'popup',         label: '팝업' },
 ]
 
@@ -74,9 +95,11 @@ const FORM_COLS_OPTIONS = [
 
 const TYPE_COLORS: Record<string, string> = {
   text: '#1677ff', password: '#722ed1', number: '#52c41a',
-  date: '#fa8c16', datetime: '#fa541c', select: '#13c2c2',
-  textarea: '#eb2f96', file: '#f5222d', popup: '#faad14',
-  radio: '#2f54eb', checkbox: '#389e0d',
+  date: '#fa8c16', datetime: '#fa541c', year: '#d46b08', month: '#d46b08', 'date-range': '#ad6800',
+  select: '#13c2c2', radio: '#2f54eb', checkbox: '#389e0d',
+  textarea: '#eb2f96', editor: '#531dab', file: '#f5222d',
+  grid: '#0958d9', popup: '#faad14',
+  'info-banner': '#08979c', 'stat-card': '#0958d9',
 }
 
 // ─── 타입 ────────────────────────────────────────────────────
@@ -414,17 +437,19 @@ const ScreenDesignPage: React.FC = () => {
   const { currentProject } = useAuthStore()
   const queryClient = useQueryClient()
 
-  const [fieldOpen,    setFieldOpen]    = useState(false)
-  const [screenOpen,   setScreenOpen]   = useState(!screenId)
-  const [copyOpen,     setCopyOpen]     = useState(false)
-  const [previewMode,  setPreviewMode]  = useState(false)
-  const [editingField, setEditingField] = useState<Field | null>(null)
-  const [localFields,  setLocalFields]  = useState<Field[]>([])
-  const [activeField,  setActiveField]  = useState<Field | null>(null)
-  const [copyLoading,  setCopyLoading]  = useState(false)
+  const [fieldOpen,      setFieldOpen]      = useState(false)
+  const [screenOpen,     setScreenOpen]     = useState(!screenId)
+  const [copyOpen,       setCopyOpen]       = useState(false)
+  const [gridConfigOpen, setGridConfigOpen] = useState(false)
+  const [previewMode,    setPreviewMode]    = useState(false)
+  const [editingField,   setEditingField]   = useState<Field | null>(null)
+  const [localFields,    setLocalFields]    = useState<Field[]>([])
+  const [activeField,    setActiveField]    = useState<Field | null>(null)
+  const [copyLoading,    setCopyLoading]    = useState(false)
 
   const [fieldForm]  = Form.useForm()
   const [screenForm] = Form.useForm()
+  const watchedFieldType = Form.useWatch('fieldType', fieldForm)
 
   const nameAc  = useFieldSuggestions('name')
   const labelAc = useFieldSuggestions('label')
@@ -452,11 +477,19 @@ const ScreenDesignPage: React.FC = () => {
   // ─── Mutations ───────────────────────────────────────────
   const saveScreenMutation = useMutation({
     mutationFn: (v: Record<string, unknown>) => {
-      const { formCols, ...rest } = v
+      const { formCols, useAgGrid, sectionsJson, openType, ...rest } = v
+      let sections: unknown = undefined
+      if (sectionsJson) {
+        try { sections = JSON.parse(sectionsJson as string) } catch { sections = undefined }
+      }
+      const layoutConfig: Record<string, unknown> = { formCols: formCols ?? 2 }
+      if (useAgGrid) layoutConfig.useAgGrid = true
+      if (sections) layoutConfig.sections = sections
       return api.post('/schema/admin/screens', {
         ...rest,
-        layoutConfig: JSON.stringify({ formCols: formCols ?? 2 }),
+        layoutConfig: JSON.stringify(layoutConfig),
         projectId: currentProject?.projectId,
+        openType: openType ?? 'page',
       })
     },
     onSuccess: (res) => {
@@ -486,6 +519,8 @@ const ScreenDesignPage: React.FC = () => {
       } else {
         queryClient.invalidateQueries({ queryKey: ['screenDetail', screenId] })
       }
+      // 런타임 스키마 캐시도 무효화 (미리보기에서 최신 필드가 바로 반영되도록)
+      queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
     },
     onError: () => message.error('저장 중 오류가 발생했습니다.'),
   })
@@ -498,12 +533,16 @@ const ScreenDesignPage: React.FC = () => {
       // 즉시 제거
       setLocalFields(prev => prev.filter(f => f.fieldId !== fieldId))
       queryClient.invalidateQueries({ queryKey: ['screenDetail', screenId] })
+      queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
     },
   })
 
   const moveMutation = useMutation({
     mutationFn: ({ fieldId, rowPos, colPos }: { fieldId: number; rowPos: number; colPos: number }) =>
       api.put(`/schema/admin/screens/${screenId}/fields/${fieldId}/move`, { rowPos, colPos }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
+    },
     onError: () => {
       if (screen?.fields) setLocalFields([...screen.fields])
       message.error('위치 변경 중 오류가 발생했습니다.')
@@ -595,7 +634,14 @@ const ScreenDesignPage: React.FC = () => {
   const openScreenModal = () => {
     if (screen) {
       const cfg = safeParseJson(screen.layoutConfig)
-      screenForm.setFieldsValue({ ...screen, formCols: (cfg.formCols as number) ?? 2 })
+      const sections = cfg.sections
+      screenForm.setFieldsValue({
+        ...screen,
+        formCols: (cfg.formCols as number) ?? 2,
+        useAgGrid: !!cfg.useAgGrid,
+        sectionsJson: sections ? JSON.stringify(sections, null, 2) : '',
+        openType: (screen as ScreenDetail & { openType?: string }).openType ?? 'page',
+      })
     }
     setScreenOpen(true)
   }
@@ -795,6 +841,31 @@ const ScreenDesignPage: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="useAgGrid" label="AG Grid 사용" valuePropName="checked" initialValue={false}
+                tooltip="그리드 화면에서 인라인 편집 가능한 AG Grid를 사용합니다">
+                <Checkbox>AG Grid (인라인 편집 지원)</Checkbox>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="openType" label="화면 열기 방식" initialValue="page"
+                tooltip="메뉴에서 이 화면을 열 때의 방식">
+                <Select options={OPEN_TYPES} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item
+            name="sectionsJson"
+            label="섹션 레이아웃 (JSON)"
+            tooltip='화면 유형이 "복합 레이아웃"일 때 섹션을 정의합니다'
+          >
+            <Input.TextArea
+              rows={6}
+              placeholder={`예시:\n[\n  {"id":"s1","type":"form","title":"기본 정보"},\n  {"id":"s2","type":"grid","title":"목록"},\n  {"id":"s3","type":"editor","title":"상세 내용"}\n]`}
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+            />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -809,7 +880,19 @@ const ScreenDesignPage: React.FC = () => {
         <Form
           form={fieldForm}
           layout="vertical"
-          onFinish={(v) => saveFieldMutation.mutate({ ...v, fieldId: editingField?.fieldId })}
+          onFinish={(v) => {
+            // Form.Item이 없는 경로(extraConfig.gridConfig 등)는 validateFields() 결과에서 누락됨
+            // → getFieldValue로 직접 읽어서 병합
+            const gridConfig = fieldForm.getFieldValue(['extraConfig', 'gridConfig'])
+            const merged = {
+              ...v,
+              extraConfig: {
+                ...(v.extraConfig as Record<string, unknown> | undefined ?? {}),
+                ...(gridConfig != null ? { gridConfig } : {}),
+              },
+            }
+            saveFieldMutation.mutate({ ...merged, fieldId: editingField?.fieldId })
+          }}
         >
           <Tabs
             size="small"
@@ -981,6 +1064,80 @@ const ScreenDesignPage: React.FC = () => {
                   </div>
                 ),
               },
+              ...(watchedFieldType === 'grid' ? [{
+                key: 'grid',
+                label: <Space size={4}><TableOutlined />그리드 설정</Space>,
+                children: (
+                  <div>
+                    <Alert message="그리드 컬럼을 설정한 후 저장하세요" type="info" showIcon style={{ marginBottom: 12 }} />
+                    <Button icon={<TableOutlined />} onClick={() => setGridConfigOpen(true)}>
+                      그리드 컬럼 편집기 열기
+                    </Button>
+                    <GridFieldConfig
+                      open={gridConfigOpen}
+                      config={(fieldForm.getFieldValue(['extraConfig', 'gridConfig']) as GridConfig) ?? { columns: [] }}
+                      onSave={(cfg) => {
+                        fieldForm.setFieldValue(['extraConfig', 'gridConfig'], cfg)
+                        setGridConfigOpen(false)
+                      }}
+                      onClose={() => setGridConfigOpen(false)}
+                    />
+                  </div>
+                ),
+              }] : []),
+              ...(watchedFieldType === 'info-banner' ? [{
+                key: 'banner',
+                label: '배너 설정',
+                children: (
+                  <div>
+                    <Alert message="배너 내용은 HTML을 지원합니다. 예: <b>굵게</b>, <br/> 줄바꿈" type="info" showIcon style={{ marginBottom: 12 }} />
+                    <Form.Item name={['extraConfig', 'bannerType']} label="배너 유형" initialValue="info">
+                      <Select options={[
+                        { value: 'info',    label: '안내 (파란색)' },
+                        { value: 'warning', label: '경고 (주황색)' },
+                        { value: 'success', label: '성공 (초록색)' },
+                        { value: 'error',   label: '오류 (빨간색)' },
+                      ]} />
+                    </Form.Item>
+                    <Form.Item name={['extraConfig', 'content']} label="내용 (HTML 가능)">
+                      <Input.TextArea rows={6} placeholder="예: <b>[등록 안내]</b><br/>현재 화면은 연도별 등급 현황입니다." />
+                    </Form.Item>
+                  </div>
+                ),
+              }] : []),
+              ...(watchedFieldType === 'stat-card' ? [{
+                key: 'stat',
+                label: '통계 카드 설정',
+                children: (
+                  <div>
+                    <Alert message="통계 카드는 검색/조회 후 폼 값이 채워지면 자동으로 표시됩니다." type="info" showIcon style={{ marginBottom: 12 }} />
+                    <Row gutter={12}>
+                      <Col span={12}>
+                        <Form.Item name={['extraConfig', 'color']} label="색상 (hex)" initialValue="#1677ff">
+                          <Input placeholder="#1677ff" />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        <Form.Item name={['extraConfig', 'suffix']} label="단위">
+                          <Input placeholder="예: 명, 건, %" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    <Row gutter={12}>
+                      <Col span={12}>
+                        <Form.Item name={['extraConfig', 'showPercent']} label="비율(%) 표시" valuePropName="checked">
+                          <Switch />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        <Form.Item name={['extraConfig', 'totalField']} label="기준 필드명 (비율 분모)">
+                          <Input placeholder="예: total_count" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </div>
+                ),
+              }] : []),
             ]}
           />
         </Form>

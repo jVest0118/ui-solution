@@ -52,14 +52,15 @@ public class ScreenAdminService {
         String layoutConfig = (String) req.get("layoutConfig");
         String buttonConfig = (String) req.get("buttonConfig");
         String projectId   = (String) req.get("projectId");
+        String openType    = (String) req.getOrDefault("openType", "page");
 
         ScreenDef screen = screenDefRepository.findById(screenId)
-                .map(s -> { s.update(screenNm, screenType, description, apiResource, layoutConfig, buttonConfig); return s; })
+                .map(s -> { s.update(screenNm, screenType, description, apiResource, layoutConfig, buttonConfig, openType); return s; })
                 .orElseGet(() -> screenDefRepository.save(ScreenDef.builder()
                         .screenId(screenId).screenNm(screenNm).screenType(screenType)
                         .description(description).apiResource(apiResource)
                         .layoutConfig(layoutConfig).buttonConfig(buttonConfig)
-                        .projectId(projectId).useYn("Y")
+                        .projectId(projectId).useYn("Y").openType(openType)
                         .build()));
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -80,6 +81,7 @@ public class ScreenAdminService {
         result.put("layoutConfig", screen.getLayoutConfig());
         result.put("buttonConfig", screen.getButtonConfig());
         result.put("projectId",   screen.getProjectId());
+        result.put("openType",    screen.getOpenType() != null ? screen.getOpenType() : "page");
         result.put("version",     screen.getVersion());
         result.put("fields", screen.getFields().stream()
                 .sorted(Comparator.comparingInt(FieldDef::getRowPos).thenComparingInt(FieldDef::getColPos))
@@ -96,19 +98,21 @@ public class ScreenAdminService {
         Long fieldId = fieldIdObj != null ? ((Number) fieldIdObj).longValue() : null;
 
         if (fieldId != null) {
+            final Map<String, Object> finalReq = req;
             screen.getFields().stream()
                     .filter(f -> f.getFieldId().equals(fieldId))
                     .findFirst()
-                    .ifPresent(f -> updateField(f, req));
+                    .ifPresent(f -> updateField(f, finalReq));
         } else {
             // 신규 필드: rowPos/colPos가 없으면 마지막 행 다음 열에 자동 배치
+            Map<String, Object> fieldReq = req;
             if (!req.containsKey("rowPos") || !req.containsKey("colPos")) {
                 int maxRow = screen.getFields().stream().mapToInt(FieldDef::getRowPos).max().orElse(-1);
-                req = new LinkedHashMap<>(req);
-                req.put("rowPos", maxRow + 1);
-                req.put("colPos", 0);
+                fieldReq = new LinkedHashMap<>(req);
+                fieldReq.put("rowPos", maxRow + 1);
+                fieldReq.put("colPos", 0);
             }
-            FieldDef field = buildField(screen, req);
+            FieldDef field = buildField(screen, fieldReq);
             screen.getFields().add(field);
         }
 

@@ -1,11 +1,12 @@
 // 화면 스키마 타입 정의 - 백엔드 ScreenSchemaDto와 1:1 대응
 
 export type FieldType =
-  | 'text' | 'password' | 'number' | 'date' | 'datetime'
+  | 'text' | 'password' | 'number' | 'date' | 'datetime' | 'year' | 'month'
   | 'select' | 'radio' | 'checkbox' | 'textarea'
-  | 'file' | 'popup' | 'grid'
+  | 'file' | 'popup' | 'grid' | 'editor'
+  | 'date-range' | 'info-banner' | 'stat-card'
 
-export type ScreenType = 'form' | 'grid' | 'master-detail' | 'popup'
+export type ScreenType = 'form' | 'grid' | 'master-detail' | 'popup' | 'composite'
 
 export interface ValidationRule {
   ruleId: number
@@ -42,6 +43,15 @@ export interface FieldDef {
   validationRules: ValidationRule[]
 }
 
+export interface ScreenSection {
+  id: string
+  type: 'form' | 'grid' | 'editor'
+  title?: string
+  fieldIds?: number[]   // form/editor 섹션 전용: 해당 섹션에 속하는 fieldId 목록 (미지정 시 모든 필드)
+}
+
+export type OpenType = 'page' | 'tab' | 'popup'
+
 export interface ScreenSchema {
   screenId: string
   screenNm: string
@@ -51,6 +61,7 @@ export interface ScreenSchema {
   layoutConfig?: Record<string, unknown>
   buttonConfig?: Record<string, unknown>
   version: number
+  openType?: OpenType
   fields: FieldDef[]
   // 권한
   canRead: boolean
