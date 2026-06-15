@@ -164,6 +164,7 @@ const FileUploadField: React.FC<FileUploadFieldProps> = ({
             disabled={disabled}
             showUploadList={false}
             beforeUpload={doUpload}
+            customRequest={() => {}}
             style={{ padding: '8px 0' }}
           >
             <p className="ant-upload-drag-icon" style={{ marginBottom: 8 }}>

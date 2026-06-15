@@ -1,5 +1,6 @@
 package com.uisolution.platform.biz.controller;
 
+import com.uisolution.platform.admin.service.UploadSettingsService;
 import com.uisolution.platform.biz.entity.UploadedFile;
 import com.uisolution.platform.biz.repository.UploadedFileRepository;
 import com.uisolution.platform.common.dto.ApiResponse;
@@ -23,8 +24,8 @@ import java.util.*;
 @RequiredArgsConstructor
 public class FileController {
 
-    private static final Path UPLOAD_DIR = Paths.get("uploads").toAbsolutePath();
     private final UploadedFileRepository uploadedFileRepository;
+    private final UploadSettingsService uploadSettingsService;
 
     private String currentUser() {
         return SecurityContextHolder.getContext().getAuthentication().getName();
@@ -36,19 +37,26 @@ public class FileController {
             @RequestParam(required = false) String screenId,
             @RequestParam(required = false) String fieldNm) throws IOException {
 
-        Files.createDirectories(UPLOAD_DIR);
-        String ext = "";
+        // 설정에서 실제 저장 디렉토리 결정
+        Path uploadDir = uploadSettingsService.resolveUploadDir(screenId);
+        Files.createDirectories(uploadDir);
+
         String originalName = file.getOriginalFilename();
-        if (originalName != null && originalName.contains("."))
-            ext = originalName.substring(originalName.lastIndexOf('.'));
+        String ext = (originalName != null && originalName.contains("."))
+                ? originalName.substring(originalName.lastIndexOf('.'))
+                : "";
 
         String storedName = UUID.randomUUID() + ext;
-        Path target = UPLOAD_DIR.resolve(storedName);
+        Path target = uploadDir.resolve(storedName);
         Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+
+        // storedPath: basePath 기준 상대경로 (forward slash로 정규화)
+        Path basePath = uploadSettingsService.getBasePath();
+        String relativePath = basePath.relativize(target).toString().replace('\\', '/');
 
         UploadedFile saved = uploadedFileRepository.save(UploadedFile.builder()
                 .originalNm(originalName)
-                .storedPath(storedName)
+                .storedPath(relativePath)
                 .fileSize(file.getSize())
                 .contentType(file.getContentType())
                 .screenId(screenId)
@@ -69,7 +77,8 @@ public class FileController {
         UploadedFile meta = uploadedFileRepository.findById(fileId)
                 .orElseThrow(() -> new IllegalArgumentException("파일을 찾을 수 없습니다."));
 
-        Path filePath = UPLOAD_DIR.resolve(meta.getStoredPath());
+        Path basePath = uploadSettingsService.getBasePath();
+        Path filePath = basePath.resolve(meta.getStoredPath());
         Resource resource = new UrlResource(filePath.toUri());
         if (!resource.exists())
             return ResponseEntity.notFound().build();
@@ -97,6 +106,7 @@ public class FileController {
         result.put("originalNm", meta.getOriginalNm());
         result.put("fileSize", meta.getFileSize());
         result.put("contentType", meta.getContentType());
+        result.put("storedPath", meta.getStoredPath());
         result.put("createdAt", meta.getCreatedAt());
         result.put("createdBy", meta.getCreatedBy());
         return ApiResponse.ok(result);

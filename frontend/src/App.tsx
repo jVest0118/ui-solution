@@ -16,6 +16,7 @@ import MenuManagementPage from '@/pages/admin/MenuManagementPage'
 import CodeManagementPage from '@/pages/admin/CodeManagementPage'
 import ProjectManagementPage from '@/pages/admin/ProjectManagementPage'
 import ScreenDesignPage from '@/pages/admin/ScreenDesignPage'
+import UploadSettingsPage from '@/pages/admin/UploadSettingsPage'
 import { ScreenRenderer } from '@/components/renderer/ScreenRenderer'
 import { useAuthStore } from '@/store/authStore'
 
@@ -53,10 +54,11 @@ const App: React.FC = () => (
             <Route index element={<Navigate to="/admin/screens" replace />} />
 
             {/* 시스템관리 */}
-            <Route path="admin/users"    element={<UserManagementPage />} />
-            <Route path="admin/roles"    element={<RoleManagementPage />} />
-            <Route path="admin/menus"    element={<MenuManagementPage />} />
-            <Route path="admin/projects" element={<ProjectManagementPage />} />
+            <Route path="admin/users"           element={<UserManagementPage />} />
+            <Route path="admin/roles"           element={<RoleManagementPage />} />
+            <Route path="admin/menus"           element={<MenuManagementPage />} />
+            <Route path="admin/projects"        element={<ProjectManagementPage />} />
+            <Route path="admin/upload-settings" element={<UploadSettingsPage />} />
 
             {/* 화면설계 */}
             <Route path="admin/screens"              element={<ScreenListPage />} />
