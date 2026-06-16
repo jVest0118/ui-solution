@@ -10,11 +10,16 @@ CREATE TABLE IF NOT EXISTS upload_settings (
     CONSTRAINT pk_upload_settings PRIMARY KEY (id)
 );
 
-MERGE INTO upload_settings (id, base_path, sub_dir_type, fixed_sub_dir)
-    KEY(id) VALUES (1, 'uploads', 'DATE', NULL);
+-- H2(PostgreSQL MODE) / PostgreSQL 공통 upsert
+INSERT INTO upload_settings (id, base_path, sub_dir_type, fixed_sub_dir)
+VALUES (1, 'uploads', 'DATE', NULL)
+ON CONFLICT (id) DO NOTHING;
 
 -- System Mgmt 메뉴에 파일 업로드 설정 추가
 INSERT INTO menu_def (menu_id, parent_id, menu_nm, menu_url, menu_icon, sort_order, project_id)
-VALUES ('MNU001_05', 'MNU001', '파일 업로드 설정', '/admin/upload-settings', 'CloudUploadOutlined', 5, NULL);
+VALUES ('MNU001_05', 'MNU001', '파일 업로드 설정', '/admin/upload-settings', 'CloudUploadOutlined', 5, NULL)
+ON CONFLICT (menu_id) DO NOTHING;
 
-INSERT INTO role_menu (role_id, menu_id) VALUES ('SYSTEM_ADMIN', 'MNU001_05');
+INSERT INTO role_menu (role_id, menu_id)
+VALUES ('SYSTEM_ADMIN', 'MNU001_05')
+ON CONFLICT (role_id, menu_id) DO NOTHING;

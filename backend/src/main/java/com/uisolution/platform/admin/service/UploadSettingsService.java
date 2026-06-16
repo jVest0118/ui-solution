@@ -20,10 +20,9 @@ public class UploadSettingsService {
 
     @Transactional(readOnly = true)
     public UploadSettings get() {
-        return repository.findById(1L).orElseGet(() -> {
-            UploadSettings s = new UploadSettings();
-            return repository.save(s);
-        });
+        // V7 마이그레이션이 정상 실행되면 row(id=1)가 항상 존재.
+        // 혹시 없을 경우 기본값 UploadSettings 반환 (basePath=uploads, subDirType=DATE)
+        return repository.findById(1L).orElse(new UploadSettings());
     }
 
     @Transactional
