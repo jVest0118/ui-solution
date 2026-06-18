@@ -29,18 +29,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         String token = resolveToken(request);
 
-        if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
-            String userId = jwtTokenProvider.getUserIdFromToken(token);
-            String roles = jwtTokenProvider.getRolesFromToken(token);
+        if (StringUtils.hasText(token)) {
+            if (jwtTokenProvider.validateToken(token)) {
+                String userId = jwtTokenProvider.getUserIdFromToken(token);
+                String roles = jwtTokenProvider.getRolesFromToken(token);
 
-            List<SimpleGrantedAuthority> authorities = Arrays.stream(roles.split(","))
-                    .filter(StringUtils::hasText)
-                    .map(SimpleGrantedAuthority::new)
-                    .collect(Collectors.toList());
+                List<SimpleGrantedAuthority> authorities = Arrays.stream(roles.split(","))
+                        .filter(StringUtils::hasText)
+                        .map(SimpleGrantedAuthority::new)
+                        .collect(Collectors.toList());
 
-            UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(userId, null, authorities);
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(userId, null, authorities);
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            } else {
+                // 토큰이 존재하지만 만료/유효하지 않음 → 401 반환 (클라이언트가 리프레시 시도)
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"success\":false,\"message\":\"토큰이 만료되었습니다.\",\"errorCode\":\"TOKEN_EXPIRED\"}");
+                return;
+            }
         }
 
         filterChain.doFilter(request, response);

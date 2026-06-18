@@ -6,6 +6,8 @@ interface AuthState {
   accessToken: string | null
   userId: string | null
   userNm: string | null
+  deptNm: string | null
+  profileImgUrl: string | null
   roles: string[]
   menus: MenuDto[]
   projects: ProjectDto[]
@@ -24,6 +26,8 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       userId: null,
       userNm: null,
+      deptNm: null,
+      profileImgUrl: null,
       roles: [],
       menus: [],
       projects: [],
@@ -38,6 +42,8 @@ export const useAuthStore = create<AuthState>()(
           accessToken: response.accessToken,
           userId: response.userId,
           userNm: response.userNm,
+          deptNm: response.deptNm ?? null,
+          profileImgUrl: response.profileImgUrl ?? null,
           roles: response.roles,
           menus: response.menus,
           projects,
@@ -53,6 +59,8 @@ export const useAuthStore = create<AuthState>()(
           accessToken: null,
           userId: null,
           userNm: null,
+          deptNm: null,
+          profileImgUrl: null,
           roles: [],
           menus: [],
           projects: [],
@@ -74,6 +82,8 @@ export const useAuthStore = create<AuthState>()(
         accessToken: s.accessToken,
         userId: s.userId,
         userNm: s.userNm,
+        deptNm: s.deptNm,
+        profileImgUrl: s.profileImgUrl,
         roles: s.roles,
         menus: s.menus,
         projects: s.projects,

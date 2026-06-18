@@ -5,6 +5,7 @@ import com.uisolution.platform.schema.dto.ScreenSchemaDto;
 import com.uisolution.platform.schema.service.SchemaService;
 import com.uisolution.platform.schema.service.ScreenAdminService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
@@ -48,6 +49,13 @@ public class SchemaController {
     @GetMapping("/admin/screens/{screenId}")
     public ApiResponse<Map<String, Object>> getScreenDetail(@PathVariable String screenId) {
         return ApiResponse.ok(screenAdminService.getScreenDetail(screenId));
+    }
+
+    @DeleteMapping("/admin/screens/{screenId}")
+    @PreAuthorize("hasAuthority('SYSTEM_ADMIN')")
+    public ApiResponse<Void> deleteScreen(@PathVariable String screenId) {
+        screenAdminService.deleteScreen(screenId);
+        return ApiResponse.ok(null);
     }
 
     @PostMapping("/admin/screens/{screenId}/fields")

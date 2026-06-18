@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -65,10 +66,32 @@ public class AuthService {
                 .refreshToken(refreshToken)
                 .userId(user.getUserId())
                 .userNm(user.getUserNm())
+                .deptNm(user.getDeptNm())
+                .profileImgUrl(user.getProfileImgUrl())
                 .roles(roleIds)
                 .menus(menuTree)
                 .projects(projects)
                 .build();
+    }
+
+    public Map<String, String> refresh(String refreshToken) {
+        if (!jwtTokenProvider.validateToken(refreshToken)) {
+            throw new IllegalArgumentException("리프레시 토큰이 만료되었습니다. 다시 로그인하세요.");
+        }
+
+        String userId = jwtTokenProvider.getUserIdFromToken(refreshToken);
+        UserInfo user = userRepository.findActiveUserWithRoles(userId)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+        String roles = user.getRoles().stream()
+                .map(r -> r.getRoleId())
+                .collect(Collectors.joining(","));
+
+        String newAccessToken = jwtTokenProvider.generateAccessToken(userId, roles);
+
+        Map<String, String> result = new HashMap<>();
+        result.put("accessToken", newAccessToken);
+        return result;
     }
 
     private List<LoginResponse.MenuDto> buildMenuTree(List<MenuDef> menus) {

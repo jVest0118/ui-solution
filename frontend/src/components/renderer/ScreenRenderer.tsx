@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   Row, Col, Button, Space, Spin, Alert, message,
   Input, Divider, Popconfirm, Typography, Card, Modal, Table, Tag, Tabs
@@ -17,7 +17,13 @@ import { schemaApi } from '@/api/schema'
 import { FieldRenderer } from '@/components/fields/FieldRenderer'
 import { RichTextEditor } from '@/components/editor/RichTextEditor'
 import { validateAll } from './ValidationRunner'
-import type { ScreenSchema, FieldDef, ScreenSection } from '@/types/schema'
+import { evaluateFieldConditions } from '@/utils/conditionEvaluator'
+import { executeActions, getBindingsForEvent } from '@/utils/eventActionExecutor'
+import type { EventBinding } from '@/types/events'
+import { DashboardRenderer } from './DashboardRenderer'
+import { ReportRenderer } from './ReportRenderer'
+import CanvasPageRenderer from './CanvasPageRenderer'
+import type { ScreenSchema, FieldDef, ScreenSection, CanvasConfig } from '@/types/schema'
 import api from '@/api/axios'
 import { useTabStore } from '@/store/tabStore'
 
@@ -39,6 +45,21 @@ function getLayoutConfig(cfg: unknown): Record<string, unknown> {
   return cfg as Record<string, unknown>
 }
 
+function getButtonConfig(cfg: unknown) {
+  const obj = getLayoutConfig(cfg)
+  const buttons = (obj.buttons as Array<Record<string, unknown>> | undefined) ?? []
+  const submitBtn = buttons.find(b => b.action === 'submit')
+  const resetBtn = buttons.find(b => b.action === 'reset')
+  return {
+    align: (obj.align as 'left' | 'center' | 'right') ?? 'center',
+    submitLabel: (submitBtn?.label as string) || undefined,
+    resetLabel: (resetBtn?.label as string) || undefined,
+    showReset: (resetBtn?.visible as boolean) !== false,
+  }
+}
+
+const ALIGN_MAP: Record<string, string> = { left: 'flex-start', center: 'center', right: 'flex-end' }
+
 function groupByRowPos(fields: FieldDef[]): Map<number, FieldDef[]> {
   const map = new Map<number, FieldDef[]>()
   for (const f of fields) {
@@ -50,6 +71,22 @@ function groupByRowPos(fields: FieldDef[]): Map<number, FieldDef[]> {
     rowFields.sort((a, b) => (a.colPos ?? 0) - (b.colPos ?? 0))
   }
   return map
+}
+
+// rowSpan으로 덮이는 셀 좌표 집합 (렌더링 시 스킵 대상)
+function buildRowspanCovered(fields: FieldDef[]): Set<string> {
+  const covered = new Set<string>()
+  for (const f of fields) {
+    if ((f.rowSpan || 1) <= 1) continue
+    const rSpan = f.rowSpan
+    const cSpan = f.colSpan || 1
+    for (let ri = f.rowPos + 1; ri < f.rowPos + rSpan; ri++) {
+      for (let ci = f.colPos; ci < f.colPos + cSpan; ci++) {
+        covered.add(`${ri}-${ci}`)
+      }
+    }
+  }
+  return covered
 }
 
 // ─── 코드옵션 로더 ────────────────────────────────────────────
@@ -73,8 +110,9 @@ const FormBody: React.FC<{
   initialValues?: Record<string, unknown>
   onSuccess?: (data: unknown) => void
   compact?: boolean
-  fields?: FieldDef[]   // 섹션 필터링된 필드 (미지정 시 schema.fields 전체)
-}> = ({ schema, screenId, initialValues = {}, onSuccess, compact, fields: propFields }) => {
+  fields?: FieldDef[]
+  eventBindings?: EventBinding[]
+}> = ({ schema, screenId, initialValues = {}, onSuccess, compact, fields: propFields, eventBindings }) => {
   const [values, setValues] = useState<Record<string, unknown>>(initialValues)
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -83,6 +121,13 @@ const FormBody: React.FC<{
   const formId = `form-${screenId}-${Math.random().toString(36).slice(2, 7)}`
 
   const allFields = propFields ?? schema.fields
+
+  const conditionResults = useMemo(() => {
+    const map: Record<number, { visible: boolean; required: boolean; disabled: boolean }> = {}
+    allFields.forEach(f => { map[f.fieldId] = evaluateFieldConditions(f.extraConfig, values) })
+    return map
+  }, [allFields, values])
+
   const codeFields = allFields.filter(f => f.codeGroup && ['select', 'radio', 'checkbox'].includes(f.fieldType))
   const uniqueGroups = [...new Set(codeFields.map(f => f.codeGroup!))]
 
@@ -108,12 +153,87 @@ const FormBody: React.FC<{
     setErrors(prev => ({ ...prev, [fieldNm]: msg }))
   }, [])
 
+  // 데이터 바인딩: 화면 로드 시 data-source 실행 후 필드 값 주입 (신규 폼만)
+  useEffect(() => {
+    if (editId) return  // 기존 레코드 편집 시 바인딩 건너뜀
+
+    interface DataBinding { enabled?: boolean; sourceNm?: string; column?: string; rowIndex?: number }
+    const boundFields = allFields.filter(f => (f.extraConfig?.dataBinding as DataBinding | undefined)?.enabled === true)
+    if (!boundFields.length) return
+
+    api.get(`/schema/admin/screens/${screenId}/data-sources`)
+      .then(r => {
+        const sources: Array<{ id: number; sourceNm: string }> = r.data.data ?? []
+
+        // sourceNm 별로 바인딩 필드 그룹핑
+        const bySource = new Map<string, typeof boundFields>()
+        boundFields.forEach(f => {
+          const db = f.extraConfig?.dataBinding as DataBinding
+          if (db?.sourceNm) {
+            if (!bySource.has(db.sourceNm)) bySource.set(db.sourceNm, [])
+            bySource.get(db.sourceNm)!.push(f)
+          }
+        })
+
+        // 각 데이터 소스 실행 후 결과를 폼 값에 병합
+        bySource.forEach((fields, sourceNm) => {
+          const src = sources.find(s => s.sourceNm === sourceNm)
+          if (!src) return
+
+          api.post(`/schema/screens/${screenId}/data-sources/${src.id}/execute`, { inputParams: {} })
+            .then(res => {
+              const rows: Array<Record<string, unknown>> = res.data.data?.rows ?? []
+              setValues(prev => {
+                const next = { ...prev }
+                fields.forEach(f => {
+                  const db = f.extraConfig?.dataBinding as DataBinding
+                  const col = db?.column
+                  const rowIdx = db?.rowIndex ?? 0
+                  if (col && rows[rowIdx] !== undefined && rows[rowIdx][col] !== undefined) {
+                    next[f.fieldNm] = rows[rowIdx][col]
+                  }
+                })
+                return next
+              })
+            })
+            .catch(err => {
+              console.warn(`데이터 바인딩 실패 [${sourceNm}]:`, err)
+            })
+        })
+      })
+      .catch(() => {/* 데이터 소스 목록 로드 실패 무시 */})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenId])
+
+  // onLoad 이벤트 실행
+  useEffect(() => {
+    const actions = getBindingsForEvent(eventBindings, 'onLoad')
+    if (actions.length) {
+      executeActions(actions, {
+        formValues: values,
+        setFieldValue: handleChange,
+      })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleSave = async () => {
-    const errs = validateAll(allFields, values)
+    const currentVisibleFields = allFields.filter(f => !f.hidden && conditionResults[f.fieldId]?.visible !== false)
+    const errs = validateAll(currentVisibleFields, values)
+    // 조건부 필수 검증
+    const condReqErrs: Record<string, string> = {}
+    currentVisibleFields.forEach(f => {
+      if (conditionResults[f.fieldId]?.required) {
+        const val = values[f.fieldNm]
+        if (val === undefined || val === null || String(val).trim() === '') {
+          condReqErrs[f.fieldNm] = `${f.fieldLabel}은(는) 필수 입력입니다.`
+        }
+      }
+    })
     const eventErrs = Object.entries(errors).filter(([, v]) => v).reduce<Record<string, string>>(
       (acc, [k, v]) => { acc[k] = v as string; return acc }, {}
     )
-    const allErrs = { ...errs, ...eventErrs }
+    const allErrs = { ...errs, ...condReqErrs, ...eventErrs }
     if (Object.keys(allErrs).length > 0) { setErrors(allErrs); message.error('입력값을 확인해주세요.'); return }
     setSubmitting(true)
     try {
@@ -122,6 +242,14 @@ const FormBody: React.FC<{
       message.success('저장되었습니다.')
       handleReset()
       onSuccess?.(values)
+      // onSubmit 이벤트 실행
+      const submitActions = getBindingsForEvent(eventBindings, 'onSubmit')
+      if (submitActions.length) {
+        executeActions(submitActions, {
+          formValues: values,
+          setFieldValue: handleChange,
+        })
+      }
     } catch (e: unknown) {
       const err = e as { response?: { data?: { message?: string } } }
       message.error(err.response?.data?.message ?? '저장 중 오류가 발생했습니다.')
@@ -130,12 +258,14 @@ const FormBody: React.FC<{
 
   const handleReset = () => { setValues({}); setErrors({}) }
 
-  const visibleFields = allFields.filter(f => !f.hidden)
+  const visibleFields = allFields.filter(f => !f.hidden && conditionResults[f.fieldId]?.visible !== false)
   const layoutCfg = getLayoutConfig(schema.layoutConfig)
   const formCols = (layoutCfg.formCols as number) ?? 1
+  const btnCfg = getButtonConfig(schema.buttonConfig)
 
   const rowsByPos = groupByRowPos(visibleFields)
   const sortedRowNums = [...rowsByPos.keys()].sort((a, b) => a - b)
+  const rowspanCovered = useMemo(() => buildRowspanCovered(visibleFields), [visibleFields])
 
   const thStyle: React.CSSProperties = {
     background: '#fafafa',
@@ -177,12 +307,18 @@ const FormBody: React.FC<{
               const cells: React.ReactNode[] = []
               let col = 0
               while (col < formCols) {
+                // rowSpan으로 이미 덮인 셀은 스킵
+                if (rowspanCovered.has(`${rowNum}-${col}`)) { col++; continue }
+
                 const field = slotMap.get(col)
                 if (field) {
-                  const span = Math.min(field.colSpan || 1, formCols - col)
+                  const span    = Math.min(field.colSpan || 1, formCols - col)
+                  const rSpan   = field.rowSpan || 1
                   const tdColSpan = span > 1 ? 2 * span - 1 : 1
                   const fieldError = errors[field.fieldNm]
-                  const isRequired = field.validationRules.some(r => r.ruleType === 'required')
+                  const condResult = conditionResults[field.fieldId] ?? { visible: true, required: false, disabled: false }
+                  const isRequired = field.validationRules.some(r => r.ruleType === 'required') || condResult.required
+                  const isCondDisabled = condResult.disabled
 
                   // info-banner / editor / grid / textarea → 전체 행 (th 레이블 + td 전체 너비)
                   const isFullWidth = field.fieldType === 'info-banner'
@@ -211,38 +347,47 @@ const FormBody: React.FC<{
                           onChange={handleChange} error={fieldError}
                           codeOptions={field.codeGroup ? (codeMap[field.codeGroup] ?? []) : []}
                           formValues={values} onSetError={handleSetError}
+                          disabled={isCondDisabled}
                         />
                         {fieldError && <div role="alert" style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{fieldError}</div>}
                       </td>,
                     )
                     col = formCols
                   } else if (isStatCard) {
-                    // stat-card: th 없이 td만 렌더링 (카드 내부에 레이블 포함)
                     cells.push(
-                      <td key={`td-${field.fieldId}`} colSpan={tdColSpan + 1} style={tdStyle}>
+                      <td key={`td-${field.fieldId}`} colSpan={tdColSpan + 1}
+                          rowSpan={rSpan > 1 ? rSpan : undefined}
+                          style={tdStyle}>
                         <FieldRenderer
                           field={field} value={values[field.fieldNm]}
                           onChange={handleChange} error={fieldError}
                           codeOptions={[]}
                           formValues={values} onSetError={handleSetError}
+                          disabled={isCondDisabled}
                         />
                       </td>,
                     )
                     col += span
                   } else {
                     cells.push(
-                      <th key={`th-${field.fieldId}`} scope="row" style={thStyle}>
+                      <th key={`th-${field.fieldId}`} scope="row"
+                          rowSpan={rSpan > 1 ? rSpan : undefined}
+                          style={{ ...thStyle, verticalAlign: rSpan > 1 ? 'top' : 'middle' }}>
                         <label htmlFor={`${formId}-${field.fieldNm}`}>
                           {field.fieldLabel}
                           {isRequired && <span aria-hidden="true" style={{ color: '#ff4d4f', marginLeft: 3 }}>*</span>}
                         </label>
                       </th>,
-                      <td key={`td-${field.fieldId}`} colSpan={tdColSpan} style={{ ...tdStyle, background: fieldError ? '#fff2f0' : undefined }}>
+                      <td key={`td-${field.fieldId}`} colSpan={tdColSpan}
+                          rowSpan={rSpan > 1 ? rSpan : undefined}
+                          style={{ ...tdStyle, background: fieldError ? '#fff2f0' : undefined,
+                                   verticalAlign: rSpan > 1 ? 'top' : 'middle' }}>
                         <FieldRenderer
                           field={field} value={values[field.fieldNm]}
                           onChange={handleChange} error={fieldError}
                           codeOptions={field.codeGroup ? (codeMap[field.codeGroup] ?? []) : []}
                           formValues={values} onSetError={handleSetError}
+                          disabled={isCondDisabled}
                         />
                         {fieldError && <div role="alert" style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{fieldError}</div>}
                       </td>,
@@ -263,13 +408,15 @@ const FormBody: React.FC<{
         </table>
 
         {!compact && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
+          <div style={{ display: 'flex', justifyContent: ALIGN_MAP[btnCfg.align] ?? 'center', gap: 8, marginTop: 16 }}>
             {(schema.canCreate || schema.canUpdate) && (
               <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={submitting}>
-                {editId ? '수정' : '저장'}
+                {btnCfg.submitLabel ?? (editId ? '수정' : '저장')}
               </Button>
             )}
-            <Button icon={<ReloadOutlined />} onClick={handleReset}>초기화</Button>
+            {btnCfg.showReset && (
+              <Button icon={<ReloadOutlined />} onClick={handleReset}>{btnCfg.resetLabel ?? '초기화'}</Button>
+            )}
           </div>
         )}
         {compact && (
@@ -648,6 +795,16 @@ const CompositeRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = 
           />
         </div>
       )}
+      {section.type === 'canvas' && (
+        (section as { canvasConfig?: CanvasConfig }).canvasConfig
+          ? <CanvasPageRenderer
+              config={(section as { canvasConfig: CanvasConfig }).canvasConfig}
+              screenId={screenId}
+            />
+          : <div style={{ padding: 20, textAlign: 'center', color: '#bbb', border: '1px dashed #ddd', borderRadius: 6 }}>
+              캔버스 섹션 (설계 필요)
+            </div>
+      )}
     </div>
   )
 
@@ -661,6 +818,7 @@ const CompositeRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = 
         {section.type === 'form' && <FormOutlined style={{ color: '#4096ff' }} />}
         {section.type === 'grid' && <TableOutlined style={{ color: '#4096ff' }} />}
         {section.type === 'editor' && <FileTextOutlined style={{ color: '#4096ff' }} />}
+        {section.type === 'canvas' && <span style={{ color: '#4096ff' }}>🎨</span>}
         <Text strong style={{ color: '#1677ff' }}>{section.title}</Text>
       </div>
     ) : null
@@ -700,12 +858,20 @@ const FormRenderer: React.FC<{
   screenId: string
   initialValues?: Record<string, unknown>
   onSuccess?: (data: unknown) => void
-}> = ({ schema, screenId, initialValues, onSuccess }) => (
-  <div style={{ padding: 24 }}>
-    <Title level={4} style={{ marginBottom: 20 }}>{schema.screenNm}</Title>
-    <FormBody schema={schema} screenId={screenId} initialValues={initialValues} onSuccess={onSuccess} />
-  </div>
-)
+}> = ({ schema, screenId, initialValues, onSuccess }) => {
+  const cfg = getLayoutConfig(schema.layoutConfig)
+  const eventBindings = (cfg.eventBindings as EventBinding[] | undefined) ?? []
+  return (
+    <div style={{ padding: 24 }}>
+      <Title level={4} style={{ marginBottom: 20 }}>{schema.screenNm}</Title>
+      <FormBody
+        schema={schema} screenId={screenId}
+        initialValues={initialValues} onSuccess={onSuccess}
+        eventBindings={eventBindings}
+      />
+    </div>
+  )
+}
 
 // ─── Master-Detail 렌더러 ─────────────────────────────────────
 const MasterDetailRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = ({ schema, screenId }) => {
@@ -772,6 +938,33 @@ export const ScreenRenderer: React.FC<ExtendedProps> = ({
         return <CompositeRenderer schema={schema} screenId={screenId} />
       case 'popup':
         return <GridRenderer schema={schema} screenId={screenId} onSelect={onSelect} popupMode />
+      case 'dashboard':
+        return (
+          <div style={{ padding: '8px 0' }}>
+            <Title level={4} style={{ margin: '0 16px 8px' }}>{schema.screenNm}</Title>
+            <DashboardRenderer layoutConfig={getLayoutConfig(schema.layoutConfig)} />
+          </div>
+        )
+      case 'report':
+        return (
+          <ReportRenderer
+            layoutConfig={getLayoutConfig(schema.layoutConfig)}
+            screenNm={schema.screenNm}
+          />
+        )
+      case 'canvas': {
+        const canvasCfg = getLayoutConfig(schema.layoutConfig) as unknown as CanvasConfig
+        if (!canvasCfg?.elements?.length) {
+          return <div style={{ padding: 40, textAlign: 'center', color: '#aaa' }}>캔버스가 비어 있습니다.</div>
+        }
+        return (
+          <CanvasPageRenderer
+            config={canvasCfg}
+            screenId={screenId}
+            onSuccess={onSuccess}
+          />
+        )
+      }
       case 'form':
       default:
         return <FormRenderer schema={schema} screenId={screenId} initialValues={initialValues} onSuccess={onSuccess} />

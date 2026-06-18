@@ -45,6 +45,17 @@ public class JwtTokenProvider {
                 .compact();
     }
 
+    public String generateAccessToken(String userId, String roles) {
+        Date now = new Date();
+        return Jwts.builder()
+                .subject(userId)
+                .claim("roles", roles)
+                .issuedAt(now)
+                .expiration(new Date(now.getTime() + expiration))
+                .signWith(secretKey)
+                .compact();
+    }
+
     public String generateRefreshToken(String userId) {
         Date now = new Date();
         return Jwts.builder()

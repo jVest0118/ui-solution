@@ -97,6 +97,25 @@ public class FileController {
                 .body(resource);
     }
 
+    /** 이미지 인라인 조회 (프로필 사진 등 img src로 직접 사용) */
+    @GetMapping("/{fileId}/view")
+    public ResponseEntity<Resource> view(@PathVariable Long fileId) throws MalformedURLException {
+        UploadedFile meta = uploadedFileRepository.findById(fileId)
+                .orElseThrow(() -> new IllegalArgumentException("파일을 찾을 수 없습니다."));
+
+        Path basePath = uploadSettingsService.getBasePath();
+        Path filePath = basePath.resolve(meta.getStoredPath());
+        Resource resource = new UrlResource(filePath.toUri());
+        if (!resource.exists())
+            return ResponseEntity.notFound().build();
+
+        String contentType = meta.getContentType() != null ? meta.getContentType() : "application/octet-stream";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .body(resource);
+    }
+
     @GetMapping("/{fileId}/info")
     public ApiResponse<Map<String, Object>> info(@PathVariable Long fileId) {
         UploadedFile meta = uploadedFileRepository.findById(fileId)

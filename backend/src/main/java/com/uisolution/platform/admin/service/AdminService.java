@@ -29,7 +29,8 @@ public class AdminService {
             m.put("userId",   u.getUserId());
             m.put("userNm",   u.getUserNm());
             m.put("email",    u.getEmail());
-            m.put("deptNm",   u.getDeptNm());
+            m.put("deptNm",       u.getDeptNm());
+            m.put("profileImgUrl", u.getProfileImgUrl());
             m.put("useYn",    u.getUseYn());
             m.put("lastLoginDt", u.getLastLoginDt());
             m.put("roles", u.getRoles().stream().map(RoleDef::getRoleId).collect(Collectors.toList()));
@@ -45,20 +46,21 @@ public class AdminService {
         String email = (String) req.get("email");
         String deptNm = (String) req.get("deptNm");
         String useYn = (String) req.getOrDefault("useYn", "Y");
+        String profileImgUrl = (String) req.get("profileImgUrl");
 
         if (userRepository.existsById(userId)) {
             // update
             if (rawPassword != null && !rawPassword.isBlank()) {
                 userRepository.updatePassword(userId, passwordEncoder.encode(rawPassword));
             }
-            // partial update via native query for other fields
-            userRepository.updateInfo(userId, userNm, email, deptNm, useYn);
+            userRepository.updateInfo(userId, userNm, email, deptNm, useYn, profileImgUrl);
         } else {
             String encoded = rawPassword != null && !rawPassword.isBlank()
                     ? passwordEncoder.encode(rawPassword) : passwordEncoder.encode("Change1234!");
             UserInfo user = UserInfo.builder()
                     .userId(userId).userNm(userNm).password(encoded)
                     .email(email).deptNm(deptNm).useYn(useYn)
+                    .profileImgUrl(profileImgUrl)
                     .build();
             userRepository.save(user);
         }

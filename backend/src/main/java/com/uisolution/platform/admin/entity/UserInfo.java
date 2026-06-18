@@ -33,6 +33,9 @@ public class UserInfo extends BaseEntity {
     @Column(name = "dept_nm", length = 100)
     private String deptNm;
 
+    @Column(name = "profile_img_url", length = 500)
+    private String profileImgUrl;
+
     @Column(name = "use_yn", length = 1)
     private String useYn = "Y";
 

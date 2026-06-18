@@ -24,6 +24,8 @@ export interface LoginResponse {
   refreshToken: string
   userId: string
   userNm: string
+  deptNm?: string
+  profileImgUrl?: string
   roles: string[]
   menus: MenuDto[]
   projects: ProjectDto[]

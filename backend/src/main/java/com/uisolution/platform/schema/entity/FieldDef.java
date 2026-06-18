@@ -89,7 +89,8 @@ public class FieldDef {
     }
 
     public void updateAll(String fieldNm, String fieldLabel, String fieldType,
-                          String placeholder, String defaultValue, int colSpan, int sortOrder,
+                          String placeholder, String defaultValue,
+                          int colSpan, int rowSpan, int sortOrder,
                           String readonlyYn, String hiddenYn, String codeGroup, String extraConfig,
                           int rowPos, int colPos) {
         this.fieldNm = fieldNm;
@@ -98,6 +99,7 @@ public class FieldDef {
         this.placeholder = placeholder;
         this.defaultValue = defaultValue;
         this.colSpan = colSpan;
+        this.rowSpan = rowSpan;
         this.sortOrder = sortOrder;
         this.readonlyYn = readonlyYn;
         this.hiddenYn = hiddenYn;

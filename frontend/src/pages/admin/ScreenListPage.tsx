@@ -1,7 +1,7 @@
 import React from 'react'
-import { Table, Tag, Button, Space, Typography } from 'antd'
-import { PlusOutlined, EditOutlined, PlayCircleOutlined } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
+import { Table, Tag, Button, Space, Typography, Popconfirm, message } from 'antd'
+import { PlusOutlined, EditOutlined, PlayCircleOutlined, DeleteOutlined } from '@ant-design/icons'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/api/axios'
@@ -13,11 +13,16 @@ const screenTypeLabel: Record<string, { label: string; color: string }> = {
   grid:            { label: '그리드조회',    color: 'green' },
   'master-detail': { label: '마스터-디테일', color: 'purple' },
   popup:           { label: '팝업',          color: 'orange' },
+  composite:       { label: '복합레이아웃',  color: 'cyan' },
+  dashboard:       { label: '대시보드',      color: 'geekblue' },
+  report:          { label: '리포트',        color: 'volcano' },
 }
 
 const ScreenListPage: React.FC = () => {
   const navigate = useNavigate()
-  const { currentProject } = useAuthStore()
+  const { currentProject, roles } = useAuthStore()
+  const queryClient = useQueryClient()
+  const isSysAdmin = roles.includes('SYSTEM_ADMIN')
 
   const { data, isLoading } = useQuery<Record<string, unknown>[]>({
     queryKey: ['adminScreens', currentProject?.projectId],
@@ -25,6 +30,18 @@ const ScreenListPage: React.FC = () => {
       api.get('/schema/admin/screens', {
         params: { projectId: currentProject?.projectId },
       }).then(r => r.data.data ?? []),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (screenId: string) => api.delete(`/schema/admin/screens/${screenId}`),
+    onSuccess: () => {
+      message.success('화면이 삭제되었습니다.')
+      queryClient.invalidateQueries({ queryKey: ['adminScreens'] })
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: { message?: string } } }
+      message.error(e.response?.data?.message ?? '삭제 중 오류가 발생했습니다.')
+    },
   })
 
   const columns = [
@@ -41,13 +58,32 @@ const ScreenListPage: React.FC = () => {
     { title: '버전',    dataIndex: 'version', width: 60 },
     { title: '프로젝트', dataIndex: 'projectId', width: 110, render: (v: string) => v ?? <Tag>플랫폼</Tag> },
     {
-      title: '작업', width: 150,
+      title: '작업', width: isSysAdmin ? 200 : 150,
       render: (_: unknown, r: Record<string, unknown>) => (
         <Space>
           <Button size="small" icon={<EditOutlined />}
             onClick={() => navigate(`/admin/screens/${r.screenId}`)}>설계</Button>
           <Button size="small" icon={<PlayCircleOutlined />}
             onClick={() => navigate(`/app/${r.screenId}`)}>실행</Button>
+          {isSysAdmin && (
+            <Popconfirm
+              title="화면 삭제"
+              description={`'${r.screenNm}'을(를) 삭제하시겠습니까? 모든 필드 정보도 함께 삭제됩니다.`}
+              onConfirm={() => deleteMutation.mutate(r.screenId as string)}
+              okText="삭제"
+              cancelText="취소"
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                loading={deleteMutation.isPending && deleteMutation.variables === r.screenId}
+              >
+                삭제
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },

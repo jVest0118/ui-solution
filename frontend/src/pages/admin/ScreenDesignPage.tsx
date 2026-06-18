@@ -2,12 +2,13 @@ import React, { useState, useRef, useEffect } from 'react'
 import {
   Button, Modal, Form, Input, Select, InputNumber, Switch,
   message, Typography, Card, Row, Col, Divider, Space, Tooltip,
-  Badge, AutoComplete, Collapse, Tabs, Popconfirm, Tag, Checkbox, Alert
+  Badge, AutoComplete, Collapse, Tabs, Popconfirm, Tag, Checkbox, Alert, Drawer
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined,
   ArrowLeftOutlined, InfoCircleOutlined, ThunderboltOutlined,
-  AppstoreAddOutlined, CopyOutlined, TableOutlined
+  AppstoreAddOutlined, CopyOutlined, TableOutlined, BranchesOutlined, CloseOutlined,
+  DatabaseOutlined
 } from '@ant-design/icons'
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor,
@@ -20,8 +21,14 @@ import { useNavigate, useParams } from 'react-router-dom'
 import api from '@/api/axios'
 import { useAuthStore } from '@/store/authStore'
 import { ScreenRenderer } from '@/components/renderer/ScreenRenderer'
+import DataSourceManager, { DataBindingEditor } from '@/components/admin/DataSourceManager'
 import { GridFieldConfig } from '@/components/fields/GridFieldConfig'
 import type { GridConfig } from '@/components/fields/GridFieldConfig'
+import { DashboardDesigner } from './DashboardDesigner'
+import { ReportDesigner } from './ReportDesigner'
+import type { DashboardWidget } from '@/components/renderer/DashboardRenderer'
+import { EventActionEditor } from '@/components/admin/EventActionEditor'
+import type { EventBinding } from '@/types/events'
 
 const { Title, Text } = Typography
 
@@ -61,14 +68,19 @@ const FIELD_TYPES = [
   { value: 'select',     label: 'Select (공통코드)' },
   { value: 'radio',      label: 'Radio' },
   { value: 'checkbox',   label: 'Checkbox' },
+  // ─── 복합 입력 ──────────────────────────────
+  { value: 'address',    label: 'Address (주소 검색)' },
+  { value: 'phone',      label: 'Phone (핸드폰 번호)' },
   // ─── 복합 컴포넌트 ──────────────────────────
   { value: 'editor',     label: 'Editor (리치 텍스트)' },
   { value: 'grid',       label: 'Grid (인라인 그리드)' },
   { value: 'file',       label: 'File Upload' },
   { value: 'popup',      label: 'Popup Search' },
   // ─── 표시 전용 ──────────────────────────────
-  { value: 'info-banner', label: 'Info Banner (안내 배너)' },
-  { value: 'stat-card',   label: 'Stat Card (통계 카드)' },
+  { value: 'info-banner',    label: 'Info Banner (안내 배너)' },
+  { value: 'stat-card',      label: 'Stat Card (통계 카드)' },
+  // ─── 캔버스 섹션 ─────────────────────────────
+  { value: 'canvas-section', label: '🎨 캔버스 섹션 (열 병합용)' },
 ]
 
 const OPEN_TYPES = [
@@ -83,6 +95,9 @@ const SCREEN_TYPES = [
   { value: 'master-detail', label: '마스터-디테일' },
   { value: 'composite',     label: '복합 레이아웃 (섹션)' },
   { value: 'popup',         label: '팝업' },
+  { value: 'dashboard',     label: '대시보드 (차트/통계)' },
+  { value: 'report',        label: '리포트 (출력/Excel)' },
+  { value: 'canvas',        label: '🎨 자유 배치 캔버스' },
 ]
 
 const FORM_COLS_OPTIONS = [
@@ -100,6 +115,7 @@ const TYPE_COLORS: Record<string, string> = {
   textarea: '#eb2f96', editor: '#531dab', file: '#f5222d',
   grid: '#0958d9', popup: '#faad14',
   'info-banner': '#08979c', 'stat-card': '#0958d9',
+  address: '#7cb305', phone: '#c41d7f',
 }
 
 // ─── 타입 ────────────────────────────────────────────────────
@@ -111,6 +127,7 @@ interface Field {
   placeholder?: string
   defaultValue?: string
   colSpan: number
+  rowSpan: number
   sortOrder: number
   rowPos: number
   colPos: number
@@ -128,6 +145,8 @@ interface ScreenDetail {
   apiResource?: string
   projectId?: string
   layoutConfig?: string
+  buttonConfig?: string
+  openType?: string
   fields: Field[]
 }
 
@@ -180,10 +199,14 @@ function buildCellMap(fields: Field[], formCols: number): Map<string, CellOccupa
   for (const f of fields) {
     const r = f.rowPos ?? 0
     const c = f.colPos ?? 0
-    const span = Math.min(f.colSpan || 1, formCols - c)
+    const cSpan = Math.min(f.colSpan || 1, formCols - c)
+    const rSpan = f.rowSpan || 1
     map.set(`${r}-${c}`, f)
-    for (let ci = c + 1; ci < c + span; ci++) {
-      map.set(`${r}-${ci}`, 'spanned')
+    // 같은 행에서 colSpan으로 덮이는 셀
+    for (let ci = c + 1; ci < c + cSpan; ci++) map.set(`${r}-${ci}`, 'spanned')
+    // rowSpan으로 덮이는 아래 행 셀들
+    for (let ri = r + 1; ri < r + rSpan; ri++) {
+      for (let ci = c; ci < c + cSpan; ci++) map.set(`${ri}-${ci}`, 'spanned')
     }
   }
   return map
@@ -204,7 +227,7 @@ const FieldDragOverlay: React.FC<{ field: Field }> = ({ field }) => (
       background: '#fff', opacity: 0.92, cursor: 'grabbing',
       minWidth: 160, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
     }}
-    bodyStyle={{ padding: '8px 12px' }}
+    styles={{ body: { padding: '8px 12px' } }}
   >
     <div style={{ fontWeight: 600, fontSize: 13 }}>{field.fieldLabel}</div>
     <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{field.fieldNm}</div>
@@ -233,7 +256,7 @@ const DraggableFieldCard: React.FC<{
           border: `1.5px solid ${TYPE_COLORS[field.fieldType] ?? '#e8e8e8'}40`,
           background: '#fff', cursor: 'grab', userSelect: 'none', height: '100%',
         }}
-        bodyStyle={{ padding: '8px 10px' }}
+        styles={{ body: { padding: '8px 10px' } }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
           <span
@@ -254,7 +277,10 @@ const DraggableFieldCard: React.FC<{
               </Tag>
               {field.fieldNm}
               {(field.colSpan || 1) > 1 && (
-                <span style={{ color: '#1677ff', marginLeft: 4, fontSize: 10 }}>×{field.colSpan}열</span>
+                <span style={{ color: '#1677ff', marginLeft: 4, fontSize: 10 }}>←{field.colSpan}열→</span>
+              )}
+              {(field.rowSpan || 1) > 1 && (
+                <span style={{ color: '#52c41a', marginLeft: 4, fontSize: 10 }}>↕{field.rowSpan}행</span>
               )}
             </div>
             <div style={{ fontSize: 10, color: '#bfbfbf', marginTop: 2 }}>
@@ -262,12 +288,25 @@ const DraggableFieldCard: React.FC<{
             </div>
           </div>
           <Space size={2} style={{ flexShrink: 0 }}>
+            {field.fieldType === 'canvas-section' && field.fieldId && (
+              <Tooltip title="캔버스 편집">
+                <Button
+                  size="small" type="primary" ghost
+                  style={{ fontSize: 11 }}
+                  onClick={e => {
+                    e.stopPropagation()
+                    const screenId = window.location.pathname.split('/')[3]
+                    window.location.href = `/admin/screens/${screenId}/canvas?fieldId=${field.fieldId}`
+                  }}
+                >🎨</Button>
+              </Tooltip>
+            )}
             <Tooltip title="편집">
               <Button size="small" type="text" icon={<EditOutlined />} onClick={e => { e.stopPropagation(); onEdit() }} />
             </Tooltip>
             <Popconfirm title="이 필드를 삭제하시겠습니까?" onConfirm={onDelete} okText="삭제" cancelText="취소">
               <Tooltip title="삭제">
-                <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={e => e.stopPropagation()} />
+                <Button size="small" type="text" danger icon={<DeleteOutlined />} />
               </Tooltip>
             </Popconfirm>
           </Space>
@@ -279,19 +318,20 @@ const DraggableFieldCard: React.FC<{
 
 // ─── 드랍 가능한 셀 ──────────────────────────────────────────
 const DroppableCell: React.FC<{
-  row: number; col: number; colSpan?: number; children: React.ReactNode
-}> = ({ row, col, colSpan = 1, children }) => {
+  row: number; col: number; colSpan?: number; rowSpan?: number; children: React.ReactNode
+}> = ({ row, col, colSpan = 1, rowSpan = 1, children }) => {
   const { setNodeRef, isOver } = useDroppable({ id: `cell-${row}-${col}` })
   return (
     <div
       ref={setNodeRef}
       style={{
         gridColumn: colSpan > 1 ? `span ${colSpan}` : undefined,
+        gridRow:    rowSpan > 1 ? `span ${rowSpan}` : undefined,
         borderRadius: 8,
         border: isOver ? '2px dashed #1677ff' : '2px solid transparent',
         background: isOver ? '#e6f4ff' : 'transparent',
         transition: 'border-color 0.15s, background 0.15s',
-        minHeight: 64,
+        minHeight: rowSpan > 1 ? 64 * rowSpan + 8 * (rowSpan - 1) : 64,
       }}
     >
       {children}
@@ -314,6 +354,106 @@ const EmptyCell: React.FC<{ onClick: () => void }> = ({ onClick }) => (
     onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = '#d9d9d9'; (e.currentTarget as HTMLElement).style.color = '#bfbfbf' }}
   >+</div>
 )
+
+// ─── 조건부 로직 에디터 ──────────────────────────────────────
+const OP_OPTIONS = [
+  { value: 'eq',       label: '= 같음' },
+  { value: 'ne',       label: '≠ 다름' },
+  { value: 'gt',       label: '> 초과' },
+  { value: 'lt',       label: '< 미만' },
+  { value: 'gte',      label: '≥ 이상' },
+  { value: 'lte',      label: '≤ 이하' },
+  { value: 'in',       label: '포함 (쉼표 구분)' },
+  { value: 'notIn',    label: '미포함 (쉼표 구분)' },
+  { value: 'contains', label: '문자열 포함' },
+  { value: 'empty',    label: '비어있음' },
+  { value: 'notEmpty', label: '비어있지 않음' },
+]
+
+interface ConditionRuleUi { field: string; op: string; value: string }
+interface ConditionsValue {
+  showWhen?: ConditionRuleUi[]
+  hideWhen?: ConditionRuleUi[]
+  requiredWhen?: ConditionRuleUi[]
+  disabledWhen?: ConditionRuleUi[]
+}
+
+const ConditionsEditor: React.FC<{
+  value?: ConditionsValue
+  onChange?: (v: ConditionsValue) => void
+  availableFields: { fieldNm: string; fieldLabel: string }[]
+}> = ({ value = {}, onChange, availableFields }) => {
+  const update = (key: keyof ConditionsValue, rules: ConditionRuleUi[]) =>
+    onChange?.({ ...value, [key]: rules.length ? rules : undefined })
+
+  const renderGroup = (
+    key: keyof ConditionsValue,
+    label: string,
+    logic: string,
+    desc: string,
+    color: string,
+  ) => {
+    const rules = (value[key] ?? []) as ConditionRuleUi[]
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <div style={{ fontWeight: 600, color, fontSize: 13 }}>{label}</div>
+          <div style={{ fontSize: 11, color: '#999', background: '#f5f5f5', borderRadius: 4, padding: '1px 6px' }}>{logic}</div>
+        </div>
+        <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>{desc}</div>
+        {rules.map((rule, idx) => (
+          <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+            <Select
+              size="small" style={{ flex: 1, minWidth: 100 }}
+              placeholder="필드 선택"
+              value={rule.field || undefined}
+              onChange={v => { const n = [...rules]; n[idx] = { ...n[idx], field: v }; update(key, n) }}
+              options={availableFields.map(f => ({ value: f.fieldNm, label: `${f.fieldLabel} (${f.fieldNm})` }))}
+              showSearch
+              filterOption={(input, opt) => (opt?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
+            <Select
+              size="small" style={{ width: 130 }}
+              value={rule.op || undefined}
+              onChange={v => { const n = [...rules]; n[idx] = { ...n[idx], op: v }; update(key, n) }}
+              options={OP_OPTIONS}
+            />
+            {!['empty', 'notEmpty'].includes(rule.op) && (
+              <Input
+                size="small" style={{ flex: 1, minWidth: 80 }}
+                placeholder={['in', 'notIn'].includes(rule.op) ? 'A, B, C' : '값'}
+                value={rule.value ?? ''}
+                onChange={e => { const n = [...rules]; n[idx] = { ...n[idx], value: e.target.value }; update(key, n) }}
+              />
+            )}
+            <Button size="small" type="text" danger icon={<CloseOutlined />}
+              onClick={() => update(key, rules.filter((_, i) => i !== idx))} />
+          </div>
+        ))}
+        <Button size="small" icon={<PlusOutlined />} style={{ fontSize: 11 }}
+          onClick={() => update(key, [...rules, { field: '', op: 'eq', value: '' }])}>
+          조건 추가
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <Alert
+        message="다른 필드 값에 따라 이 필드를 동적으로 제어합니다"
+        description="예: 결제유형이 '계좌이체'일 때만 계좌번호 필드 표시"
+        type="info" showIcon style={{ marginBottom: 14, fontSize: 12 }} />
+      {renderGroup('showWhen',     '표시 조건 (showWhen)',     'AND — 모두 만족 시 표시', '설정 시 조건 불만족이면 필드 숨김 (기본: 항상 표시)', '#1677ff')}
+      <Divider style={{ margin: '8px 0' }} />
+      {renderGroup('hideWhen',     '숨김 조건 (hideWhen)',     'OR — 하나라도 만족 시 숨김', '설정 시 조건 만족이면 필드 숨김', '#fa8c16')}
+      <Divider style={{ margin: '8px 0' }} />
+      {renderGroup('requiredWhen', '필수 조건 (requiredWhen)', 'AND — 모두 만족 시 필수', '설정 시 조건 만족이면 필수 입력으로 변경', '#f5222d')}
+      <Divider style={{ margin: '8px 0' }} />
+      {renderGroup('disabledWhen', '비활성화 조건 (disabledWhen)', 'OR — 하나라도 만족 시 비활성', '설정 시 조건 만족이면 입력 불가', '#8c8c8c')}
+    </div>
+  )
+}
 
 // ─── 필드 복사 모달 ──────────────────────────────────────────
 const CopyFieldsModal: React.FC<{
@@ -434,7 +574,8 @@ const CopyFieldsModal: React.FC<{
 const ScreenDesignPage: React.FC = () => {
   const { screenId } = useParams<{ screenId?: string }>()
   const navigate = useNavigate()
-  const { currentProject } = useAuthStore()
+  const { currentProject, roles } = useAuthStore()
+  const isSysAdmin = roles.includes('SYSTEM_ADMIN')
   const queryClient = useQueryClient()
 
   const [fieldOpen,      setFieldOpen]      = useState(false)
@@ -446,6 +587,12 @@ const ScreenDesignPage: React.FC = () => {
   const [localFields,    setLocalFields]    = useState<Field[]>([])
   const [activeField,    setActiveField]    = useState<Field | null>(null)
   const [copyLoading,    setCopyLoading]    = useState(false)
+  const [dashSaving,     setDashSaving]     = useState(false)
+  const [reportSaving,   setReportSaving]   = useState(false)
+  const [eventDrawerOpen, setEventDrawerOpen] = useState(false)
+  const [screenEvents,    setScreenEvents]    = useState<EventBinding[]>([])
+  const [eventSaving,     setEventSaving]     = useState(false)
+  const [dsDrawerOpen,    setDsDrawerOpen]    = useState(false)
 
   const [fieldForm]  = Form.useForm()
   const [screenForm] = Form.useForm()
@@ -465,8 +612,19 @@ const ScreenDesignPage: React.FC = () => {
     enabled: !!screenId,
   })
 
+  // canvas 타입이면 캔버스 디자이너로 이동
+  useEffect(() => {
+    if (screen?.screenType === 'canvas' && screenId) {
+      navigate(`/admin/screens/${screenId}/canvas`, { replace: true })
+    }
+  }, [screen, screenId, navigate])
+
   useEffect(() => {
     if (screen?.fields) setLocalFields([...screen.fields])
+    if (screen?.layoutConfig) {
+      const cfg = safeParseJson(screen.layoutConfig)
+      setScreenEvents((cfg.eventBindings as EventBinding[]) ?? [])
+    }
   }, [screen])
 
   const { data: codeGroups } = useQuery({
@@ -477,7 +635,7 @@ const ScreenDesignPage: React.FC = () => {
   // ─── Mutations ───────────────────────────────────────────
   const saveScreenMutation = useMutation({
     mutationFn: (v: Record<string, unknown>) => {
-      const { formCols, useAgGrid, sectionsJson, openType, ...rest } = v
+      const { formCols, useAgGrid, sectionsJson, openType, btnAlign, btnSubmitLabel, btnResetLabel, btnShowReset, ...rest } = v
       let sections: unknown = undefined
       if (sectionsJson) {
         try { sections = JSON.parse(sectionsJson as string) } catch { sections = undefined }
@@ -485,9 +643,17 @@ const ScreenDesignPage: React.FC = () => {
       const layoutConfig: Record<string, unknown> = { formCols: formCols ?? 2 }
       if (useAgGrid) layoutConfig.useAgGrid = true
       if (sections) layoutConfig.sections = sections
+      const buttonConfig = {
+        align: btnAlign ?? 'center',
+        buttons: [
+          { key: 'submit', label: (btnSubmitLabel as string) || '저장', type: 'primary', action: 'submit', visible: true },
+          { key: 'reset', label: (btnResetLabel as string) || '초기화', type: 'default', action: 'reset', visible: btnShowReset !== false },
+        ],
+      }
       return api.post('/schema/admin/screens', {
         ...rest,
         layoutConfig: JSON.stringify(layoutConfig),
+        buttonConfig: JSON.stringify(buttonConfig),
         projectId: currentProject?.projectId,
         openType: openType ?? 'page',
       })
@@ -498,7 +664,11 @@ const ScreenDesignPage: React.FC = () => {
       navigate(`/admin/screens/${res.data.data.screenId}`)
       queryClient.invalidateQueries({ queryKey: ['adminScreens'] })
     },
-    onError: () => message.error('저장 중 오류가 발생했습니다.'),
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: { message?: string }; status?: number } }
+      const msg = e.response?.data?.message ?? '저장 중 오류가 발생했습니다.'
+      message.error(`[${e.response?.status ?? 'ERR'}] ${msg}`)
+    },
   })
 
   const saveFieldMutation = useMutation({
@@ -530,10 +700,14 @@ const ScreenDesignPage: React.FC = () => {
       api.delete(`/schema/admin/screens/${screenId}/fields/${fieldId}`),
     onSuccess: (_data, fieldId) => {
       message.success('필드가 삭제되었습니다.')
-      // 즉시 제거
       setLocalFields(prev => prev.filter(f => f.fieldId !== fieldId))
       queryClient.invalidateQueries({ queryKey: ['screenDetail', screenId] })
       queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: { message?: string }; status?: number } }
+      const msg = e.response?.data?.message ?? '삭제 중 오류가 발생했습니다.'
+      message.error(`[${e.response?.status ?? 'ERR'}] ${msg}`)
     },
   })
 
@@ -541,6 +715,8 @@ const ScreenDesignPage: React.FC = () => {
     mutationFn: ({ fieldId, rowPos, colPos }: { fieldId: number; rowPos: number; colPos: number }) =>
       api.put(`/schema/admin/screens/${screenId}/fields/${fieldId}/move`, { rowPos, colPos }),
     onSuccess: () => {
+      // screenDetail 캐시도 갱신하여 폼 저장 시 useEffect가 stale 데이터로 덮어쓰지 않도록
+      queryClient.invalidateQueries({ queryKey: ['screenDetail', screenId] })
       queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
     },
     onError: () => {
@@ -553,7 +729,7 @@ const ScreenDesignPage: React.FC = () => {
   const layoutCfg = safeParseJson(screen?.layoutConfig)
   const formCols = (layoutCfg.formCols as number) ?? 2
 
-  const maxRow = localFields.reduce((m, f) => Math.max(m, f.rowPos ?? 0), -1)
+  const maxRow = localFields.reduce((m, f) => Math.max(m, (f.rowPos ?? 0) + (f.rowSpan || 1) - 1), -1)
   const gridRowCount = maxRow + 2
   const cellMap = buildCellMap(localFields, formCols)
 
@@ -635,12 +811,20 @@ const ScreenDesignPage: React.FC = () => {
     if (screen) {
       const cfg = safeParseJson(screen.layoutConfig)
       const sections = cfg.sections
+      const btnCfg = safeParseJson(screen.buttonConfig)
+      const buttons = (btnCfg.buttons as Array<Record<string, unknown>> | undefined) ?? []
+      const submitBtn = buttons.find(b => b.action === 'submit')
+      const resetBtn = buttons.find(b => b.action === 'reset')
       screenForm.setFieldsValue({
         ...screen,
         formCols: (cfg.formCols as number) ?? 2,
         useAgGrid: !!cfg.useAgGrid,
         sectionsJson: sections ? JSON.stringify(sections, null, 2) : '',
-        openType: (screen as ScreenDetail & { openType?: string }).openType ?? 'page',
+        openType: screen.openType ?? 'page',
+        btnAlign: (btnCfg.align as string) ?? 'center',
+        btnSubmitLabel: (submitBtn?.label as string) ?? '',
+        btnResetLabel: (resetBtn?.label as string) ?? '',
+        btnShowReset: (resetBtn?.visible as boolean) !== false,
       })
     }
     setScreenOpen(true)
@@ -677,6 +861,92 @@ const ScreenDesignPage: React.FC = () => {
     }
   }
 
+  // ─── 대시보드 위젯 저장 ─────────────────────────────────────
+  const handleSaveDashboard = async (
+    widgets: DashboardWidget[],
+    gridCfg?: { cols: number; rowHeight: number },
+  ) => {
+    if (!screen) return
+    setDashSaving(true)
+    try {
+      const existing = safeParseJson(screen.layoutConfig)
+      const updated = {
+        ...existing,
+        widgets,
+        ...(gridCfg ?? {}),
+      }
+      await api.post('/schema/admin/screens', {
+        screenId: screen.screenId,
+        screenNm: screen.screenNm,
+        screenType: screen.screenType,
+        description: screen.description,
+        apiResource: screen.apiResource,
+        projectId: screen.projectId,
+        layoutConfig: JSON.stringify(updated),
+      })
+      message.success('대시보드가 저장되었습니다.')
+      queryClient.invalidateQueries({ queryKey: ['screenDetail', screenId] })
+      queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
+    } catch {
+      message.error('저장 중 오류가 발생했습니다.')
+    } finally {
+      setDashSaving(false)
+    }
+  }
+
+  // ─── 리포트 설정 저장 ─────────────────────────────────────
+  const handleSaveReport = async (config: import('@/types/schema').ReportConfig) => {
+    if (!screen) return
+    setReportSaving(true)
+    try {
+      const existing = safeParseJson(screen.layoutConfig)
+      const updated = { ...existing, ...config }
+      await api.post('/schema/admin/screens', {
+        screenId: screen.screenId,
+        screenNm: screen.screenNm,
+        screenType: screen.screenType,
+        description: screen.description,
+        apiResource: screen.apiResource,
+        projectId: screen.projectId,
+        layoutConfig: JSON.stringify(updated),
+      })
+      message.success('리포트 설정이 저장되었습니다.')
+      queryClient.invalidateQueries({ queryKey: ['screenDetail', screenId] })
+      queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
+    } catch {
+      message.error('저장 중 오류가 발생했습니다.')
+    } finally {
+      setReportSaving(false)
+    }
+  }
+
+  // ─── 화면 이벤트 저장 ─────────────────────────────────────
+  const handleSaveScreenEvents = async (bindings: EventBinding[]) => {
+    if (!screen) return
+    setEventSaving(true)
+    try {
+      const existing = safeParseJson(screen.layoutConfig)
+      await api.post('/schema/admin/screens', {
+        screenId: screen.screenId,
+        screenNm: screen.screenNm,
+        screenType: screen.screenType,
+        description: screen.description,
+        apiResource: screen.apiResource,
+        projectId: screen.projectId,
+        layoutConfig: JSON.stringify({ ...existing, eventBindings: bindings }),
+      })
+      message.success('화면 이벤트가 저장되었습니다.')
+      setScreenEvents(bindings)
+      setEventDrawerOpen(false)
+      queryClient.invalidateQueries({ queryKey: ['screenDetail', screenId] })
+      queryClient.invalidateQueries({ queryKey: ['schema', screenId] })
+    } catch {
+      message.error('저장 중 오류가 발생했습니다.')
+    } finally {
+      setEventSaving(false)
+    }
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
 
@@ -703,6 +973,47 @@ const ScreenDesignPage: React.FC = () => {
               {previewMode ? '편집 모드' : '미리보기'}
             </Button>
           )}
+          {screenId && (
+            <Button
+              icon={<DatabaseOutlined />}
+              onClick={() => setDsDrawerOpen(true)}
+            >
+              데이터 소스
+            </Button>
+          )}
+          {screenId && (
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={() => setEventDrawerOpen(true)}
+            >
+              화면 이벤트
+              {screenEvents.length > 0 && (
+                <Badge count={screenEvents.length} style={{ marginLeft: 4, backgroundColor: '#fa8c16' }} />
+              )}
+            </Button>
+          )}
+          {isSysAdmin && screenId && (
+            <Popconfirm
+              title="화면 삭제"
+              description={`'${screen?.screenNm ?? screenId}'을(를) 삭제하시겠습니까? 모든 필드 정보도 함께 삭제됩니다.`}
+              onConfirm={async () => {
+                try {
+                  await api.delete(`/schema/admin/screens/${screenId}`)
+                  message.success('화면이 삭제되었습니다.')
+                  queryClient.invalidateQueries({ queryKey: ['adminScreens'] })
+                  navigate('/admin/screens')
+                } catch (err: unknown) {
+                  const e = err as { response?: { data?: { message?: string } } }
+                  message.error(e.response?.data?.message ?? '삭제 중 오류가 발생했습니다.')
+                }
+              }}
+              okText="삭제"
+              cancelText="취소"
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger icon={<DeleteOutlined />}>화면 삭제</Button>
+            </Popconfirm>
+          )}
           <Button icon={<EditOutlined />} onClick={openScreenModal}>화면 정보 편집</Button>
         </Space>
       </div>
@@ -711,7 +1022,54 @@ const ScreenDesignPage: React.FC = () => {
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         {previewMode && screenId ? (
           <ScreenRenderer screenId={screenId} />
+        ) : screen?.screenType === 'report' ? (
+          /* ─ 리포트 디자이너 ─ */
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Space>
+                <Title level={5} style={{ margin: 0 }}>리포트 디자이너</Title>
+                <Tag color="cyan">Report</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>컬럼을 설정하고 데이터를 인쇄·Excel로 출력합니다</Text>
+              </Space>
+            </div>
+            {isLoading ? (
+              <Card style={{ textAlign: 'center', padding: 40 }}>
+                <Text type="secondary">불러오는 중...</Text>
+              </Card>
+            ) : (
+              <ReportDesigner
+                config={safeParseJson(screen?.layoutConfig) as unknown as import('@/types/schema').ReportConfig}
+                onSave={handleSaveReport}
+                saving={reportSaving}
+              />
+            )}
+          </>
+        ) : screen?.screenType === 'dashboard' ? (
+          /* ─ 대시보드 디자이너 ─ */
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Space>
+                <Title level={5} style={{ margin: 0 }}>대시보드 위젯 디자인</Title>
+                <Tag color="purple">Dashboard</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>위젯을 추가·편집하여 대시보드를 구성합니다</Text>
+              </Space>
+            </div>
+            {isLoading ? (
+              <Card style={{ textAlign: 'center', padding: 40 }}>
+                <Text type="secondary">불러오는 중...</Text>
+              </Card>
+            ) : (
+              <DashboardDesigner
+                widgets={(safeParseJson(screen?.layoutConfig).widgets as DashboardWidget[]) ?? []}
+                cols={(safeParseJson(screen?.layoutConfig).cols as number) ?? 12}
+                rowHeight={(safeParseJson(screen?.layoutConfig).rowHeight as number) ?? 160}
+                onSave={handleSaveDashboard}
+                saving={dashSaving}
+              />
+            )}
+          </>
         ) : (
+          /* ─ 필드 디자이너 ─ */
           <>
             {/* 캔버스 헤더 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -766,9 +1124,10 @@ const ScreenDesignPage: React.FC = () => {
 
                       const field = occupant ?? null
                       const cellColSpan = field ? Math.min(field.colSpan || 1, formCols - colIdx) : 1
+                      const cellRowSpan = field ? (field.rowSpan || 1) : 1
 
                       return (
-                        <DroppableCell key={`cell-${rowIdx}-${colIdx}`} row={rowIdx} col={colIdx} colSpan={cellColSpan}>
+                        <DroppableCell key={`cell-${rowIdx}-${colIdx}`} row={rowIdx} col={colIdx} colSpan={cellColSpan} rowSpan={cellRowSpan}>
                           {field ? (
                             <DraggableFieldCard
                               field={field}
@@ -806,7 +1165,8 @@ const ScreenDesignPage: React.FC = () => {
         title={screenId ? '화면 정보 편집' : '새 화면 등록'}
         open={screenOpen}
         onOk={() => screenForm.submit()}
-        onCancel={() => { screenId ? setScreenOpen(false) : navigate('/admin/screens') }}
+        confirmLoading={saveScreenMutation.isPending}
+        onCancel={() => { if (!saveScreenMutation.isPending) { screenId ? setScreenOpen(false) : navigate('/admin/screens') } }}
         okText="저장" closable maskClosable={!!screenId} width={580}
       >
         <Form form={screenForm} layout="vertical" onFinish={saveScreenMutation.mutate}>
@@ -866,6 +1226,38 @@ const ScreenDesignPage: React.FC = () => {
               style={{ fontFamily: 'monospace', fontSize: 12 }}
             />
           </Form.Item>
+
+          <Divider style={{ margin: '8px 0 12px' }}>버튼 설정</Divider>
+          <Row gutter={12}>
+            <Col span={10}>
+              <Form.Item name="btnAlign" label="버튼 위치" initialValue="center">
+                <Select
+                  options={[
+                    { value: 'left', label: '좌측' },
+                    { value: 'center', label: '가운데' },
+                    { value: 'right', label: '우측' },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={14}>
+              <Form.Item name="btnSubmitLabel" label="저장 버튼 텍스트" tooltip="비워두면 '저장' 또는 '수정' 기본값 사용">
+                <Input placeholder="저장" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={10}>
+              <Form.Item name="btnShowReset" label="초기화 버튼" valuePropName="checked" initialValue={true}>
+                <Checkbox>표시</Checkbox>
+              </Form.Item>
+            </Col>
+            <Col span={14}>
+              <Form.Item name="btnResetLabel" label="초기화 버튼 텍스트" tooltip="비워두면 '초기화' 기본값 사용">
+                <Input placeholder="초기화" />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 
@@ -933,11 +1325,16 @@ const ScreenDesignPage: React.FC = () => {
                         </Form.Item>
                       </Col>
                       <Col span={4}>
-                        <Form.Item name="colSpan" label="열 병합" initialValue={1} tooltip={`1~${formCols}열`}>
+                        <Form.Item name="colSpan" label="열 병합(→)" initialValue={1} tooltip={`1~${formCols}: 가로로 병합할 열 수`}>
                           <InputNumber min={1} max={formCols} style={{ width: '100%' }} />
                         </Form.Item>
                       </Col>
-                      <Col span={5}>
+                      <Col span={4}>
+                        <Form.Item name="rowSpan" label="행 병합(↕)" initialValue={1} tooltip="세로로 병합할 행 수">
+                          <InputNumber min={1} style={{ width: '100%' }} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={3}>
                         <Form.Item
                           name="rowPos"
                           label="행 위치"
@@ -947,7 +1344,7 @@ const ScreenDesignPage: React.FC = () => {
                           <InputNumber min={0} style={{ width: '100%' }} />
                         </Form.Item>
                       </Col>
-                      <Col span={5}>
+                      <Col span={3}>
                         <Form.Item
                           name="colPos"
                           label="열 위치"
@@ -999,69 +1396,16 @@ const ScreenDesignPage: React.FC = () => {
               },
               {
                 key: 'events',
-                label: <Space size={4}><ThunderboltOutlined />이벤트 설정</Space>,
+                label: <Space size={4}><ThunderboltOutlined />이벤트/액션</Space>,
                 children: (
-                  <div>
-                    <div style={{
-                      background: '#fff7e6', border: '1px solid #ffd591',
-                      borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#d46b08', marginBottom: 16,
-                    }}>
-                      ⚡ 포커스 아웃 시 DB 중복 체크, 값 변경 시 연동 필드 자동 설정 등
-                    </div>
-                    <Collapse ghost>
-                      <Collapse.Panel header="포커스 아웃 (onBlur)" key="onBlur">
-                        <Row gutter={12}>
-                          <Col span={8}>
-                            <Form.Item name={['extraConfig', 'events', 'onBlur', 'type']} label="액션 유형">
-                              <Select allowClear placeholder="없음" options={[
-                                { value: 'API_CALL', label: 'API 호출 (GET)' },
-                                { value: 'SET_VALUE', label: '다른 필드 지우기' },
-                              ]} />
-                            </Form.Item>
-                          </Col>
-                          <Col span={16}>
-                            <Form.Item name={['extraConfig', 'events', 'onBlur', 'endpoint']} label="API 경로">
-                              <Input placeholder="예: /biz/USERS" />
-                            </Form.Item>
-                          </Col>
-                        </Row>
-                        <Row gutter={12}>
-                          <Col span={12}>
-                            <Form.Item name={['extraConfig', 'events', 'onBlur', 'errorCondition']} label="오류 조건">
-                              <Input placeholder="예: total > 0" />
-                            </Form.Item>
-                          </Col>
-                          <Col span={12}>
-                            <Form.Item name={['extraConfig', 'events', 'onBlur', 'errorMessage']} label="오류 메시지">
-                              <Input placeholder="예: 이미 사용 중인 아이디입니다" />
-                            </Form.Item>
-                          </Col>
-                        </Row>
-                      </Collapse.Panel>
-                      <Collapse.Panel header="값 변경 (onChange)" key="onChange">
-                        <Row gutter={12}>
-                          <Col span={8}>
-                            <Form.Item name={['extraConfig', 'events', 'onChange', 'type']} label="액션 유형">
-                              <Select allowClear placeholder="없음" options={[
-                                { value: 'API_CALL', label: 'API 호출 (GET)' },
-                                { value: 'SET_VALUE', label: '다른 필드 지우기' },
-                              ]} />
-                            </Form.Item>
-                          </Col>
-                          <Col span={8}>
-                            <Form.Item name={['extraConfig', 'events', 'onChange', 'endpoint']} label="API 경로">
-                              <Input placeholder="예: /biz/DEPT" />
-                            </Form.Item>
-                          </Col>
-                          <Col span={8}>
-                            <Form.Item name={['extraConfig', 'events', 'onChange', 'targetField']} label="결과 저장 필드">
-                              <Input placeholder="예: dept_nm" />
-                            </Form.Item>
-                          </Col>
-                        </Row>
-                      </Collapse.Panel>
-                    </Collapse>
-                  </div>
+                  <Form.Item name={['extraConfig', 'eventBindings']} noStyle>
+                    <EventActionEditor
+                      scopedEvents={['onChange', 'onBlur']}
+                      availableFields={localFields
+                        .filter(f => f.fieldId !== editingField?.fieldId)
+                        .map(f => ({ fieldNm: f.fieldNm, fieldLabel: f.fieldLabel }))}
+                    />
+                  </Form.Item>
                 ),
               },
               ...(watchedFieldType === 'grid' ? [{
@@ -1085,6 +1429,28 @@ const ScreenDesignPage: React.FC = () => {
                   </div>
                 ),
               }] : []),
+              {
+                key: 'dataBinding',
+                label: <Space size={4}><DatabaseOutlined />데이터 바인딩</Space>,
+                children: (
+                  <Form.Item name={['extraConfig', 'dataBinding']} noStyle>
+                    <DataBindingEditor screenId={screenId} />
+                  </Form.Item>
+                ),
+              },
+              {
+                key: 'conditions',
+                label: <Space size={4}><BranchesOutlined />조건부 로직</Space>,
+                children: (
+                  <Form.Item name={['extraConfig', 'conditions']} noStyle>
+                    <ConditionsEditor
+                      availableFields={localFields
+                        .filter(f => f.fieldId !== editingField?.fieldId)
+                        .map(f => ({ fieldNm: f.fieldNm, fieldLabel: f.fieldLabel }))}
+                    />
+                  </Form.Item>
+                ),
+              },
               ...(watchedFieldType === 'info-banner' ? [{
                 key: 'banner',
                 label: '배너 설정',
@@ -1152,6 +1518,53 @@ const ScreenDesignPage: React.FC = () => {
           onCopy={handleCopyFields}
         />
       )}
+
+      {/* ─ 데이터 소스 관리 ─ */}
+      <DataSourceManager
+        screenId={screenId}
+        open={dsDrawerOpen}
+        onClose={() => setDsDrawerOpen(false)}
+      />
+
+      {/* ─ 화면 이벤트/액션 드로어 ─ */}
+      <Drawer
+        title={
+          <Space>
+            <ThunderboltOutlined style={{ color: '#fa8c16' }} />
+            화면 이벤트/액션 빌더
+          </Space>
+        }
+        open={eventDrawerOpen}
+        onClose={() => setEventDrawerOpen(false)}
+        width={680}
+        extra={
+          <Button
+            type="primary"
+            loading={eventSaving}
+            onClick={() => handleSaveScreenEvents(screenEvents)}
+          >
+            저장
+          </Button>
+        }
+      >
+        <Alert
+          message="화면 수준 이벤트 설정"
+          description={
+            <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
+              <li><b>onLoad</b> — 화면이 처음 로드될 때 자동 실행</li>
+              <li><b>onSubmit</b> — 폼 저장 성공 후 실행 (이동, 메시지 등)</li>
+              <li><b>onRowSelect</b> — 그리드에서 행을 선택할 때 실행</li>
+            </ul>
+          }
+          type="info" showIcon style={{ marginBottom: 16 }}
+        />
+        <EventActionEditor
+          value={screenEvents}
+          onChange={setScreenEvents}
+          scopedEvents={['onLoad', 'onSubmit', 'onRowSelect']}
+          availableFields={localFields.map(f => ({ fieldNm: f.fieldNm, fieldLabel: f.fieldLabel }))}
+        />
+      </Drawer>
     </div>
   )
 }

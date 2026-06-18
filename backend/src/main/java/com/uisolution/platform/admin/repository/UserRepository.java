@@ -19,7 +19,8 @@ public interface UserRepository extends JpaRepository<UserInfo, String> {
     void updatePassword(@Param("userId") String userId, @Param("password") String password);
 
     @org.springframework.data.jpa.repository.Modifying
-    @org.springframework.data.jpa.repository.Query("UPDATE UserInfo u SET u.userNm = :userNm, u.email = :email, u.deptNm = :deptNm, u.useYn = :useYn WHERE u.userId = :userId")
+    @org.springframework.data.jpa.repository.Query("UPDATE UserInfo u SET u.userNm = :userNm, u.email = :email, u.deptNm = :deptNm, u.useYn = :useYn, u.profileImgUrl = :profileImgUrl WHERE u.userId = :userId")
     void updateInfo(@Param("userId") String userId, @Param("userNm") String userNm,
-                    @Param("email") String email, @Param("deptNm") String deptNm, @Param("useYn") String useYn);
+                    @Param("email") String email, @Param("deptNm") String deptNm,
+                    @Param("useYn") String useYn, @Param("profileImgUrl") String profileImgUrl);
 }

@@ -12,6 +12,8 @@ public class LoginResponse {
     private String refreshToken;
     private String userId;
     private String userNm;
+    private String deptNm;
+    private String profileImgUrl;
     private List<String> roles;
     private List<MenuDto> menus;
     private List<ProjectDto> projects;

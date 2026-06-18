@@ -126,6 +126,17 @@ public class ScreenAdminService {
     }
 
     @Transactional
+    public void deleteScreen(String screenId) {
+        ScreenDef screen = screenDefRepository.findById(screenId)
+                .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
+        // 연관 데이터 FK 순서대로 삭제
+        screenDefRepository.deleteBizDataByScreenId(screenId);
+        screenDefRepository.deleteRoleScreenByScreenId(screenId);
+        // screen 삭제 (field_def, validation_rule cascade)
+        screenDefRepository.delete(screen);
+    }
+
+    @Transactional
     public void deleteField(String screenId, Long fieldId) {
         ScreenDef screen = screenDefRepository.findWithFieldsAndRules(screenId)
                 .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
@@ -210,6 +221,7 @@ public class ScreenAdminService {
                 .placeholder((String) req.get("placeholder"))
                 .defaultValue((String) req.get("defaultValue"))
                 .colSpan(getInt(req, "colSpan", 1))
+                .rowSpan(getInt(req, "rowSpan", 1))
                 .sortOrder(getInt(req, "sortOrder", 0))
                 .rowPos(getInt(req, "rowPos", 0))
                 .colPos(getInt(req, "colPos", 0))
@@ -228,6 +240,7 @@ public class ScreenAdminService {
                 (String) req.get("placeholder"),
                 (String) req.get("defaultValue"),
                 getInt(req, "colSpan", f.getColSpan()),
+                getInt(req, "rowSpan", f.getRowSpan()),
                 getInt(req, "sortOrder", f.getSortOrder()),
                 (String) req.getOrDefault("readonlyYn", f.getReadonlyYn()),
                 (String) req.getOrDefault("hiddenYn", f.getHiddenYn()),
