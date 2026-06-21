@@ -48,6 +48,11 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResponse<Void> handleException(Exception e) {
         log.error("Unhandled exception", e);
-        return ApiResponse.error("서버 오류가 발생했습니다.", "SERVER_ERROR");
+        // 실제 원인 메시지를 포함하여 개발자가 프론트에서 바로 확인할 수 있도록 노출
+        Throwable root = e;
+        while (root.getCause() != null) root = root.getCause();
+        String detail = String.format("[%s] %s", root.getClass().getSimpleName(),
+                root.getMessage() != null ? root.getMessage() : e.getMessage());
+        return ApiResponse.error(detail, "SERVER_ERROR");
     }
 }

@@ -96,10 +96,14 @@ public class ScreenDataSourceService {
         Map<String, Object> testParams = req.get("testParams") instanceof Map
                 ? (Map<String, Object>) req.get("testParams") : Map.of();
 
+        // 프론트에서 현재 편집 중인 SQL을 전달하면 저장된 SQL 대신 사용 (저장 없이 즉시 테스트)
+        String sqlToRun = (req.get("sqlText") instanceof String s && !s.isBlank())
+                ? s : src.getSqlText();
+
         DataSource ds = getDataSource(src.getConnId());
         long start = System.currentTimeMillis();
         try {
-            List<Map<String, Object>> rows = executeQuery(ds, src.getSqlText(), testParams);
+            List<Map<String, Object>> rows = executeQuery(ds, sqlToRun, testParams);
             long elapsed = System.currentTimeMillis() - start;
 
             Map<String, Object> result = new LinkedHashMap<>();

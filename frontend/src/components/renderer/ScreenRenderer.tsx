@@ -1,19 +1,23 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo, Component } from 'react'
 import {
-  Row, Col, Button, Space, Spin, Alert, message,
-  Input, Divider, Popconfirm, Typography, Card, Modal, Table, Tag, Tabs
+  Row, Col, Button, Space, Alert, message,
+  Input, Divider, Popconfirm, Typography, Card, Table, Tag, Tabs, Collapse
 } from 'antd'
+import { BugOutlined, ReloadOutlined as ReloadIcon } from '@ant-design/icons'
 import {
   SearchOutlined, PlusOutlined, SaveOutlined, ReloadOutlined,
   EditOutlined, DeleteOutlined, TableOutlined, FormOutlined,
-  FileTextOutlined
+  FileTextOutlined, FileExcelOutlined, ColumnWidthOutlined,
+  CompressOutlined, MenuOutlined, AppstoreOutlined,
 } from '@ant-design/icons'
+import * as XLSX from 'xlsx'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, CellValueChangedEvent, GridApi } from 'ag-grid-community'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
 import { schemaApi } from '@/api/schema'
+import { QSpinner } from '@/components/QSpinner'
 import { FieldRenderer } from '@/components/fields/FieldRenderer'
 import { RichTextEditor } from '@/components/editor/RichTextEditor'
 import { validateAll } from './ValidationRunner'
@@ -26,8 +30,80 @@ import CanvasPageRenderer from './CanvasPageRenderer'
 import type { ScreenSchema, FieldDef, ScreenSection, CanvasConfig } from '@/types/schema'
 import api from '@/api/axios'
 import { useTabStore } from '@/store/tabStore'
+import { ZoomModal, useZoomTrigger } from '@/components/ui/ZoomModal'
 
 const { Title, Text } = Typography
+
+// ─── Error Boundary ──────────────────────────────────────────
+interface EBState { hasError: boolean; error: Error | null; info: string }
+class ScreenErrorBoundary extends Component<{ screenId: string; children: React.ReactNode }, EBState> {
+  state: EBState = { hasError: false, error: null, info: '' }
+
+  static getDerivedStateFromError(error: Error): EBState {
+    return { hasError: true, error, info: '' }
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    this.setState({ info: info.componentStack ?? '' })
+    console.error(`[ScreenRenderer] 화면 렌더링 오류 (${this.props.screenId}):`, error, info)
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children
+
+    const { error, info } = this.state
+    const msg = error?.message ?? '알 수 없는 오류'
+
+    return (
+      <div style={{ padding: 32 }}>
+        <Alert
+          type="error"
+          icon={<BugOutlined />}
+          showIcon
+          message={`화면 렌더링 오류 — ${this.props.screenId}`}
+          description={
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: 8, color: '#ff4d4f' }}>{msg}</div>
+              <Collapse
+                size="small"
+                style={{ marginTop: 8 }}
+                items={[
+                  {
+                    key: '1',
+                    label: '상세 오류 정보 (개발자용)',
+                    children: (
+                      <pre style={{
+                        fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                        background: '#1e1e1e', color: '#d4d4d4',
+                        padding: 12, borderRadius: 4, maxHeight: 300, overflowY: 'auto',
+                        margin: 0,
+                      }}>
+                        {error?.stack ?? '스택 없음'}
+                        {info ? `\n\n컴포넌트 트리:\n${info}` : ''}
+                      </pre>
+                    ),
+                  },
+                ]}
+              />
+              <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                <Button
+                  icon={<ReloadIcon />}
+                  size="small"
+                  onClick={() => this.setState({ hasError: false, error: null, info: '' })}
+                >
+                  다시 시도
+                </Button>
+                <Button size="small" onClick={() => window.location.reload()}>
+                  페이지 새로고침
+                </Button>
+              </div>
+            </div>
+          }
+        />
+      </div>
+    )
+  }
+}
 
 type CodeMap = Record<string, { value: string; label: string }[]>
 
@@ -87,6 +163,29 @@ function buildRowspanCovered(fields: FieldDef[]): Set<string> {
     }
   }
   return covered
+}
+
+// ─── JSON 경로 추출 유틸 ─────────────────────────────────────
+// jsonPath 예: "[0].email"  "[0].phone"  "name"
+function extractByJsonPath(raw: unknown, jsonPath: string): string {
+  if (raw == null || raw === '') return ''
+  try {
+    // 문자열이면 파싱, 이미 객체/배열이면 그대로
+    const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw
+    // 경로 토큰 분리: "[0]", ".email" → ["0", "email"]
+    const tokens = jsonPath
+      .replace(/\[(\d+)\]/g, '.$1')   // [0] → .0
+      .split('.')
+      .filter(Boolean)
+    let cur: unknown = parsed
+    for (const token of tokens) {
+      if (cur == null || typeof cur !== 'object') return ''
+      cur = (cur as Record<string, unknown>)[token]
+    }
+    return cur != null ? String(cur) : ''
+  } catch {
+    return String(raw)
+  }
 }
 
 // ─── 코드옵션 로더 ────────────────────────────────────────────
@@ -326,8 +425,11 @@ const FormBody: React.FC<{
                     || field.fieldType === 'grid'
                     || (field.fieldType === 'textarea' && field.colSpan >= formCols)
 
-                  // stat-card → th 없이 td만 (카드 자체에 레이블 포함)
+                  // stat-card / display → th 없이 td만
                   const isStatCard = field.fieldType === 'stat-card'
+
+                  // extraConfig.showLabel === false 이면 레이블 th 숨김
+                  const showLabel = field.extraConfig?.showLabel !== false
 
                   if (isFullWidth) {
                     // info-banner는 th 레이블 숨김 (안내 내용 자체가 전체)
@@ -370,15 +472,18 @@ const FormBody: React.FC<{
                     col += span
                   } else {
                     cells.push(
-                      <th key={`th-${field.fieldId}`} scope="row"
-                          rowSpan={rSpan > 1 ? rSpan : undefined}
-                          style={{ ...thStyle, verticalAlign: rSpan > 1 ? 'top' : 'middle' }}>
-                        <label htmlFor={`${formId}-${field.fieldNm}`}>
-                          {field.fieldLabel}
-                          {isRequired && <span aria-hidden="true" style={{ color: '#ff4d4f', marginLeft: 3 }}>*</span>}
-                        </label>
-                      </th>,
-                      <td key={`td-${field.fieldId}`} colSpan={tdColSpan}
+                      ...(showLabel ? [
+                        <th key={`th-${field.fieldId}`} scope="row"
+                            rowSpan={rSpan > 1 ? rSpan : undefined}
+                            style={{ ...thStyle, verticalAlign: rSpan > 1 ? 'top' : 'middle' }}>
+                          <label htmlFor={`${formId}-${field.fieldNm}`}>
+                            {field.fieldLabel}
+                            {isRequired && <span aria-hidden="true" style={{ color: '#ff4d4f', marginLeft: 3 }}>*</span>}
+                          </label>
+                        </th>,
+                      ] : []),
+                      <td key={`td-${field.fieldId}`}
+                          colSpan={showLabel ? tdColSpan : tdColSpan + 1}
                           rowSpan={rSpan > 1 ? rSpan : undefined}
                           style={{ ...tdStyle, background: fieldError ? '#fff2f0' : undefined,
                                    verticalAlign: rSpan > 1 ? 'top' : 'middle' }}>
@@ -437,7 +542,8 @@ const AgGridBody: React.FC<{
   onSelect?: (row: Record<string, unknown>) => void
   popupMode?: boolean
   height?: number
-}> = ({ schema, screenId, onSelect, popupMode, height = 400 }) => {
+  fixedParams?: Record<string, unknown>  // 항상 포함되는 고정 쿼리 파라미터 (마스터→디테일 필터용)
+}> = ({ schema, screenId, onSelect, popupMode, height = 400, fixedParams }) => {
   const gridRef = useRef<GridApi | null>(null)
   const [searchValues, setSearchValues] = useState<Record<string, string>>({})
   const [page, setPage] = useState(1)
@@ -445,51 +551,175 @@ const AgGridBody: React.FC<{
   const [newRows, setNewRows] = useState<Record<string, unknown>[]>([])
   const queryClient = useQueryClient()
 
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['bizData', screenId, page, searchValues],
-    queryFn: () => api.get(`/biz/${screenId}`, { params: { page, size: 500, ...searchValues } }).then(r => r.data.data),
+  // 그리드 스타일 설정
+  const layoutCfgForStyle = getLayoutConfig(schema.layoutConfig)
+  const gridStyles = layoutCfgForStyle.gridStyles as {
+    header?: { backgroundColor?: string; color?: string; fontSize?: number; fontWeight?: string; height?: number }
+    row?: { fontSize?: number; height?: number }
+    statusBar?: { height?: number; fontSize?: number; justifyContent?: string }
+  } | undefined
+
+  const agCssVars: React.CSSProperties = {
+    ...(gridStyles?.header?.backgroundColor && { '--ag-header-background-color': gridStyles.header.backgroundColor } as React.CSSProperties),
+    ...(gridStyles?.header?.color          && { '--ag-header-foreground-color': gridStyles.header.color } as React.CSSProperties),
+    ...(gridStyles?.header?.fontSize       && { '--ag-header-font-size': `${gridStyles.header.fontSize}px` } as React.CSSProperties),
+    ...(gridStyles?.row?.fontSize          && { '--ag-font-size': `${gridStyles.row.fontSize}px` } as React.CSSProperties),
+  }
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['bizData', screenId, page, searchValues, fixedParams],
+    queryFn: () => api.get(`/biz/${screenId}`, { params: { page, size: 500, ...fixedParams, ...searchValues } }).then(r => r.data.data),
     staleTime: 0,
+    retry: 1,
   })
 
+  // 복합 PK 처리: pkColumn = "col1" 또는 "col1,col2"
+  const isBizData = !schema.datasourceType || schema.datasourceType === 'biz_data'
+  const pkCols = useMemo(() =>
+    schema.pkColumn?.split(',').map(c => c.trim()).filter(Boolean) ?? [],
+  [schema.pkColumn])
+
   const deleteMutation = useMutation({
-    mutationFn: (dataId: number) => api.delete(`/biz/${screenId}/${dataId}`),
+    mutationFn: (row: Record<string, unknown>) => {
+      if (isBizData) {
+        return api.delete(`/biz/${screenId}/${row._dataId}`)
+      }
+      // 복합 PK — 각 PK 컬럼 값을 쿼리 파라미터로 전달
+      const params = pkCols.reduce<Record<string, unknown>>((acc, col) => {
+        acc[col] = row[col]; return acc
+      }, {})
+      return api.delete(`/biz/${screenId}/by-pk`, { params })
+    },
     onSuccess: () => { message.success('삭제되었습니다.'); queryClient.invalidateQueries({ queryKey: ['bizData', screenId] }) },
+    onError: (err) => {
+      const axErr = err as { response?: { data?: { message?: string }; status?: number }; message?: string }
+      const msg = axErr?.response?.data?.message ?? axErr?.message ?? '삭제 중 오류가 발생했습니다.'
+      message.error(axErr?.response?.status ? `[${axErr.response.status}] ${msg}` : msg)
+    },
   })
 
   const visibleFields = schema.fields.filter(f => !f.hidden)
 
+  // 필드 정의 없을 때 데이터 첫 행에서 컬럼 자동 감지
+  const autoColDefs: ColDef[] = useMemo(() => {
+    if (visibleFields.length > 0) return []
+    const rows = data?.rows as Record<string, unknown>[] | undefined
+    if (!rows?.length) return []
+    return Object.keys(rows[0])
+      .filter(k => k !== '_dataId')
+      .map(k => ({
+        headerName: k,
+        field: k,
+        flex: 1,
+        minWidth: 80,
+        cellStyle: { fontSize: '13px' },
+        valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '',
+      }))
+  }, [visibleFields.length, data?.rows])
+
+  // 외부 테이블의 복합 PK 컬럼 — 이미 visible field에 없으면 숨김 컬럼으로 추가
+  const visibleFieldNms = useMemo(() => new Set(visibleFields.map(f => f.fieldNm)), [visibleFields])
+  const hiddenPkColDefs: ColDef[] = useMemo(() =>
+    isBizData ? [] : pkCols
+      .filter(col => !visibleFieldNms.has(col))
+      .map(col => ({ field: col, hide: true, editable: false })),
+  [isBizData, pkCols, visibleFieldNms])
+
+  // 액션 버튼 스타일 (아이콘 버튼 공통)
+  const iconBtnStyle = (color?: string): React.CSSProperties => ({
+    border: `1px solid ${color ?? '#d9d9d9'}`,
+    background: '#fff',
+    borderRadius: 4,
+    cursor: 'pointer',
+    padding: '2px 6px',
+    color: color ?? '#595959',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 13,
+    lineHeight: 1,
+  })
+
+  const actionCol: ColDef = {
+    headerName: '',
+    field: '_action',
+    width: popupMode ? 70 : ((schema.canUpdate ? 1 : 0) + (schema.canDelete ? 1 : 0)) * 36 + 8,
+    pinned: 'right' as const,   // ← 오른쪽 고정
+    editable: false,
+    cellRenderer: (params: { data: Record<string, unknown> }) => {
+      const row = params.data
+      if (row._isNew) {
+        return <span style={{ color: '#52c41a', fontSize: 11, padding: '0 4px' }}>신규</span>
+      }
+      if (popupMode) {
+        return (
+          <button style={{ ...iconBtnStyle('#1677ff'), padding: '2px 8px', fontSize: 11 }}
+            onClick={() => onSelect?.(row as Record<string, unknown>)}>
+            선택
+          </button>
+        )
+      }
+      return (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', height: '100%' }}>
+          {schema.canUpdate && (
+            <button title="수정" style={iconBtnStyle()}>
+              {/* pencil SVG — Ant Design EditOutlined 동일 shape */}
+              <svg viewBox="64 64 896 896" width="1em" height="1em" fill="currentColor">
+                <path d="M257.7 752c2 0 4-.2 6-.5L431.9 722c2-.4 3.9-1.3 5.3-2.8l423.9-423.9a9.96 9.96 0 000-14.1L694.9 114.9c-1.9-1.9-4.4-2.9-7.1-2.9s-5.2 1-7.1 2.9L256.8 538.8c-1.5 1.5-2.4 3.3-2.8 5.3l-29.5 168.2a33.5 33.5 0 009.4 29.8c6.6 6.4 14.9 9.9 23.8 9.9zm67.4-174.4L687.8 215l73.3 73.3-362.7 362.6-88.9 15.7 15.6-89zM880 836H144c-17.7 0-32 14.3-32 32v36c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-36c0-17.7-14.3-32-32-32z"/>
+              </svg>
+            </button>
+          )}
+          {schema.canDelete && (
+            <button title="삭제" style={iconBtnStyle('#ff4d4f')}
+              onClick={() => {
+                if (!window.confirm('삭제하시겠습니까?')) return
+                deleteMutation.mutate(row as Record<string, unknown>)
+              }}>
+              {/* trash SVG — Ant Design DeleteOutlined 동일 shape */}
+              <svg viewBox="64 64 896 896" width="1em" height="1em" fill="currentColor">
+                <path d="M360 184h-8c4.4 0 8-3.6 8-8v8h304v-8c0 4.4 3.6 8 8 8h-8v72h72v-80c0-35.3-28.7-64-64-64H352c-35.3 0-64 28.7-64 64v80h72v-72zm504 72H160c-17.7 0-32 14.3-32 32v32c0 4.4 3.6 8 8 8h60.4l24.7 523c1.6 34.1 29.8 61 63.9 61h454c34.2 0 62.3-26.8 63.9-61l24.7-523H888c4.4 0 8-3.6 8-8v-32c0-17.7-14.3-32-32-32zM731.3 840H292.7l-24.2-512h487l-24.2 512z"/>
+              </svg>
+            </button>
+          )}
+        </div>
+      )
+    },
+  }
+
   const colDefs: ColDef[] = [
-    ...(popupMode ? [] : [{
-      headerName: '',
-      field: '_action',
-      width: 80,
-      pinned: 'left' as const,
-      editable: false,
-      cellRenderer: (params: { data: Record<string, unknown> }) => {
-        const div = document.createElement('div')
-        div.style.display = 'flex'; div.style.gap = '4px'; div.style.alignItems = 'center'
-        if (params.data._isNew) {
-          div.innerHTML = '<span style="color:#52c41a;font-size:11px">신규</span>'
-        } else if (schema.canDelete) {
-          const btn = document.createElement('button')
-          btn.textContent = '삭제'
-          btn.style.cssText = 'font-size:11px;padding:1px 6px;border:1px solid #ff4d4f;color:#ff4d4f;background:transparent;border-radius:4px;cursor:pointer'
-          btn.onclick = () => { if (params.data._dataId) deleteMutation.mutate(params.data._dataId as number) }
-          div.appendChild(btn)
-        }
-        return div
-      },
-    }]),
-    ...visibleFields.map(f => ({
-      headerName: f.fieldLabel,
-      field: f.fieldNm,
-      editable: !f.readonly && (schema.canCreate || schema.canUpdate),
-      flex: f.colSpan || 1,
-      minWidth: 100,
-      cellStyle: { fontSize: '13px' },
-      ...(f.fieldType === 'select' && { cellEditor: 'agSelectCellEditor', cellEditorParams: { values: [] } }),
-      ...(f.fieldType === 'number' && { cellEditor: 'agNumberCellEditor' }),
-    })),
+    ...hiddenPkColDefs,   // 숨김 PK 컬럼 (복합 PK 지원)
+    ...(visibleFields.length > 0
+      ? visibleFields.map(f => {
+          const jsonPath = f.extraConfig?.jsonPath as string | undefined
+          return {
+            headerName: f.fieldLabel,
+            field: f.fieldNm,
+            editable: !f.readonly && !jsonPath && (schema.canCreate || schema.canUpdate),
+            flex: f.colSpan || 1,
+            minWidth: 100,
+            cellStyle: {
+              fontSize: '13px',
+              textAlign: f.fieldType === 'number'
+                ? 'right'
+                : ((f.extraConfig?.align as string | undefined) ?? 'left'),
+            },
+            headerClass: f.fieldType === 'number' ? 'ag-right-aligned-header' : undefined,
+            ...(jsonPath && {
+              valueFormatter: (p: { value: unknown }) => extractByJsonPath(p.value, jsonPath),
+            }),
+            ...(f.fieldType === 'select' && !jsonPath && { cellEditor: 'agSelectCellEditor', cellEditorParams: { values: [] } }),
+            ...(f.fieldType === 'number' && !jsonPath && {
+              cellEditor: 'agNumberCellEditor',
+              valueFormatter: (p: { value: unknown }) => {
+                if (p.value === null || p.value === undefined || p.value === '') return ''
+                const n = Number(p.value)
+                return isNaN(n) ? String(p.value) : n.toLocaleString()
+              },
+            }),
+          }
+        })
+      : autoColDefs),
+    ...(popupMode ? [] : [actionCol]),   // ← 액션 컬럼을 맨 오른쪽에
   ]
 
   const rowData = [
@@ -529,8 +759,11 @@ const AgGridBody: React.FC<{
       setNewRows([])
       message.success('저장되었습니다.')
       refetch()
-    } catch {
-      message.error('저장 중 오류가 발생했습니다.')
+    } catch (e) {
+      const axErr = e as { response?: { data?: { message?: string; error?: string }; status?: number }; message?: string }
+      const status = axErr?.response?.status
+      const msg = axErr?.response?.data?.message ?? axErr?.response?.data?.error ?? axErr?.message ?? '저장 중 오류가 발생했습니다.'
+      message.error(status ? `[HTTP ${status}] ${msg}` : msg)
     }
   }
 
@@ -539,6 +772,25 @@ const AgGridBody: React.FC<{
   }
 
   const searchFields = visibleFields.filter(f => ['text', 'select'].includes(f.fieldType)).slice(0, 3)
+
+  if (isError) {
+    const errMsg = (error as { response?: { data?: { message?: string } }; message?: string })
+      ?.response?.data?.message ?? (error as Error)?.message ?? '알 수 없는 오류'
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="데이터 조회 실패"
+        description={
+          <div>
+            <div style={{ marginBottom: 8 }}>{errMsg}</div>
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => refetch()}>다시 시도</Button>
+          </div>
+        }
+        style={{ margin: 16 }}
+      />
+    )
+  }
 
   return (
     <div>
@@ -572,28 +824,76 @@ const AgGridBody: React.FC<{
         )}
       </div>
 
-      <div className="ag-theme-alpine" style={{ height, width: '100%' }}>
+      <div
+        className="ag-theme-alpine"
+        style={{
+          height,
+          width: '100%',
+          ...agCssVars,
+        }}
+      >
+        <style>{`
+          .ag-theme-alpine .ag-header-cell-label {
+            ${gridStyles?.header?.fontWeight ? `font-weight: ${gridStyles.header.fontWeight};` : ''}
+          }
+          .ag-theme-alpine .ag-paging-panel {
+            ${gridStyles?.statusBar?.height ? `height: ${gridStyles.statusBar.height}px !important; min-height: ${gridStyles.statusBar.height}px !important;` : ''}
+            ${gridStyles?.statusBar?.fontSize ? `font-size: ${gridStyles.statusBar.fontSize}px !important;` : ''}
+            ${gridStyles?.statusBar?.justifyContent ? `justify-content: ${gridStyles.statusBar.justifyContent} !important;` : ''}
+          }
+        `}</style>
         <AgGridReact
           rowData={rowData}
           columnDefs={colDefs}
           onGridReady={(e: GridReadyEvent) => { gridRef.current = e.api; e.api.sizeColumnsToFit() }}
           onCellValueChanged={handleCellValueChanged}
-          onRowClicked={popupMode ? (e) => onSelect?.(e.data as Record<string, unknown>) : undefined}
-          onRowDoubleClicked={popupMode ? (e) => onSelect?.(e.data as Record<string, unknown>) : undefined}
+          onRowClicked={onSelect ? (e) => onSelect(e.data as Record<string, unknown>) : undefined}
+          onRowDoubleClicked={onSelect ? (e) => onSelect(e.data as Record<string, unknown>) : undefined}
           loading={isLoading}
-          rowSelection={popupMode ? 'single' : 'multiple'}
+          rowSelection={(onSelect || popupMode) ? 'single' : 'multiple'}
           stopEditingWhenCellsLoseFocus
           undoRedoCellEditing
           undoRedoCellEditingLimit={20}
           getRowStyle={(params) => params.data?._isNew ? { background: '#f6ffed' } : params.data?._dataId && pendingChanges.has(params.data._dataId) ? { background: '#fff7e6' } : undefined}
-          suppressRowClickSelection={!popupMode}
+          suppressRowClickSelection={!(onSelect || popupMode)}
           domLayout="normal"
           pagination={!popupMode}
           paginationPageSize={20}
           paginationPageSizeSelector={[10, 20, 50, 100]}
+          headerHeight={gridStyles?.header?.height ?? undefined}
+          rowHeight={gridStyles?.row?.height ?? undefined}
         />
       </div>
     </div>
+  )
+}
+
+// ─── 컬럼 폭 드래그 리사이즈 헤더 셀 ─────────────────────────
+const ResizableTitle: React.FC<React.ThHTMLAttributes<HTMLTableCellElement> & {
+  onResize?: (w: number) => void
+}> = ({ onResize, children, style, ...rest }) => {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!onResize) return
+    const startX = e.clientX
+    const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement
+    const startW = th.offsetWidth
+    const onMove = (ev: MouseEvent) => onResize(Math.max(60, startW + ev.clientX - startX))
+    const onUp   = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    e.preventDefault(); e.stopPropagation()
+  }
+  return (
+    <th {...rest} style={{ ...style, position: 'relative', userSelect: 'none' }}>
+      {children}
+      {onResize && (
+        <span
+          style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6,
+            cursor: 'col-resize', zIndex: 1, background: 'transparent' }}
+          onMouseDown={handleMouseDown}
+        />
+      )}
+    </th>
   )
 }
 
@@ -606,13 +906,24 @@ const GridRenderer: React.FC<{
 }> = ({ schema, screenId, onSelect, popupMode }) => {
   const [searchValues, setSearchValues] = useState<Record<string, string>>({})
   const [page, setPage] = useState(1)
-  const [modalOpen, setModalOpen] = useState(false)
+  const [pageSize, setPageSize] = useState(20)
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [codeMap, setCodeMap] = useState<CodeMap>({})
+  const [colWidths, setColWidths] = useState<Record<string, number>>({})
+  const [tableSize, setTableSize] = useState<'large' | 'middle' | 'small'>('middle')
+  const [selectedRowKey, setSelectedRowKey] = useState<unknown>(null)
+  const { open: modalOpen, triggerEl: modalTriggerEl, handleTrigger: openModal, handleClose: closeModal } = useZoomTrigger()
   const queryClient = useQueryClient()
 
   const layoutCfg = getLayoutConfig(schema.layoutConfig)
   const useAgGrid = !!layoutCfg.useAgGrid
+  const gridSettings = (layoutCfg.gridSettings as {
+    showSearch?: boolean
+    searchFields?: string[]
+    showExcelDownload?: boolean
+  } | undefined) ?? {}
+  const showSearch = gridSettings.showSearch !== false
+  const showExcelDownload = !!gridSettings.showExcelDownload
 
   const codeFields = schema.fields.filter(f => f.codeGroup && ['select', 'radio', 'checkbox'].includes(f.fieldType))
   const uniqueGroups = [...new Set(codeFields.map(f => f.codeGroup!))]
@@ -620,21 +931,44 @@ const GridRenderer: React.FC<{
     setCodeMap(prev => ({ ...prev, [g]: opts }))
   }, [])
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['bizData', screenId, page, searchValues],
-    queryFn: () => api.get(`/biz/${screenId}`, { params: { page, size: 20, ...searchValues } }).then(r => r.data.data),
+  const { data, isLoading, isError, error: dataError } = useQuery({
+    queryKey: ['bizData', screenId, page, pageSize, searchValues],
+    queryFn: () => api.get(`/biz/${screenId}`, { params: { page, size: pageSize, ...searchValues } }).then(r => r.data.data),
     staleTime: 0,
   })
 
+  // 복합 PK 처리 (GridRenderer용)
+  const isBizDataTable = !schema.datasourceType || schema.datasourceType === 'biz_data'
+  const gridPkCols = useMemo(() =>
+    schema.pkColumn?.split(',').map(c => c.trim()).filter(Boolean) ?? [],
+  [schema.pkColumn])
+
   const deleteMutation = useMutation({
-    mutationFn: (dataId: number) => api.delete(`/biz/${screenId}/${dataId}`),
+    mutationFn: (row: Record<string, unknown>) => {
+      if (isBizDataTable) {
+        return api.delete(`/biz/${screenId}/${row._dataId}`)
+      }
+      // 복합 PK — 각 PK 컬럼 값을 쿼리 파라미터로 전달
+      const params = gridPkCols.reduce<Record<string, unknown>>((acc, col) => {
+        acc[col] = row[col]; return acc
+      }, {})
+      return api.delete(`/biz/${screenId}/by-pk`, { params })
+    },
     onSuccess: () => {
       message.success('삭제되었습니다.')
       queryClient.invalidateQueries({ queryKey: ['bizData', screenId] })
     },
+    onError: (err) => {
+      const axErr = err as { response?: { data?: { message?: string }; status?: number }; message?: string }
+      const msg = axErr?.response?.data?.message ?? axErr?.message ?? '삭제 중 오류가 발생했습니다.'
+      const status = axErr?.response?.status
+      message.error(status ? `[${status}] ${msg}` : msg)
+    },
   })
 
   const doSearch = () => setPage(1)
+
+  const setColWidth = (key: string, w: number) => setColWidths(prev => ({ ...prev, [key]: w }))
 
   const columns = [
     ...schema.fields.filter(f => !f.hidden).map(f => ({
@@ -642,6 +976,14 @@ const GridRenderer: React.FC<{
       dataIndex: f.fieldNm,
       key: f.fieldNm,
       ellipsis: true,
+      width: colWidths[f.fieldNm],
+      align: (f.fieldType === 'number'
+        ? 'right'
+        : ((f.extraConfig?.align as string | undefined) ?? 'left')) as 'left' | 'center' | 'right',
+      onHeaderCell: (col: { width?: number }) => ({
+        width: col.width,
+        onResize: (w: number) => setColWidth(f.fieldNm, w),
+      }),
       render: (v: unknown) => {
         if (f.fieldType === 'password') return '••••••'
         if (f.codeGroup && codeMap[f.codeGroup]) {
@@ -651,11 +993,22 @@ const GridRenderer: React.FC<{
         if (f.fieldType === 'editor') {
           return <span dangerouslySetInnerHTML={{ __html: String(v ?? '') }} style={{ fontSize: 12 }} />
         }
+        const jsonPath = f.extraConfig?.jsonPath as string | undefined
+        if (jsonPath) return extractByJsonPath(v, jsonPath)
+        if (f.fieldType === 'number' && v !== null && v !== undefined && v !== '') {
+          const n = Number(v)
+          return isNaN(n) ? String(v) : n.toLocaleString()
+        }
         return String(v ?? '')
       },
     })),
     {
-      title: '작업', key: '_action', width: popupMode ? 80 : 140,
+      title: '작업', key: '_action',
+      width: colWidths['_action'] ?? (popupMode ? 80 : 120),
+      onHeaderCell: (col: { width?: number }) => ({
+        width: col.width,
+        onResize: (w: number) => setColWidth('_action', w),
+      }),
       render: (_: unknown, row: Record<string, unknown>) => (
         <Space size={4}>
           {popupMode ? (
@@ -664,10 +1017,10 @@ const GridRenderer: React.FC<{
             <>
               {schema.canUpdate && (
                 <Button size="small" icon={<EditOutlined />}
-                  onClick={() => { setEditRow(row); setModalOpen(true) }} />
+                  onClick={(e) => { setEditRow(row); openModal(e) }} />
               )}
               {schema.canDelete && (
-                <Popconfirm title="삭제하시겠습니까?" onConfirm={() => deleteMutation.mutate(row._dataId as number)}>
+                <Popconfirm title="삭제하시겠습니까?" onConfirm={() => deleteMutation.mutate(row)}>
                   <Button size="small" danger icon={<DeleteOutlined />} />
                 </Popconfirm>
               )}
@@ -678,13 +1031,58 @@ const GridRenderer: React.FC<{
     },
   ]
 
-  const searchFields = schema.fields.filter(f => !f.hidden && ['text', 'select'].includes(f.fieldType)).slice(0, 3)
+  // 설계에서 명시적으로 지정한 필드, 없으면 text/select 앞 3개 자동
+  const searchFields = showSearch
+    ? (gridSettings.searchFields?.length
+      ? schema.fields.filter(f => !f.hidden && gridSettings.searchFields!.includes(f.fieldNm))
+      : schema.fields.filter(f => !f.hidden && ['text', 'select'].includes(f.fieldType)).slice(0, 3))
+    : []
+
+  const handleExcelDownload = () => {
+    const rows = data?.rows ?? []
+    const visFields = schema.fields.filter(f => !f.hidden)
+    const ws = XLSX.utils.aoa_to_sheet([
+      visFields.map(f => f.fieldLabel),
+      ...rows.map((r: Record<string, unknown>) => visFields.map(f => String(r[f.fieldNm] ?? ''))),
+    ])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '데이터')
+    XLSX.writeFile(wb, `${schema.screenNm}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
+  // 데이터 조회 오류 패널 (개발자용)
+  const dataErrorBanner = isError ? (() => {
+    const axErr = dataError as { response?: { data?: { message?: string; error?: string }; status?: number }; message?: string } | null
+    const httpStatus = axErr?.response?.status
+    const serverMsg = axErr?.response?.data?.message ?? axErr?.response?.data?.error
+    const errMsg = serverMsg ?? axErr?.message ?? '알 수 없는 오류'
+    return (
+      <Alert
+        type="error"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="데이터 조회 실패"
+        description={
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <div>
+              {httpStatus && <Tag color="red" style={{ marginRight: 6 }}>HTTP {httpStatus}</Tag>}
+              {errMsg}
+            </div>
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => queryClient.invalidateQueries({ queryKey: ['bizData', screenId] })}>
+              다시 시도
+            </Button>
+          </Space>
+        }
+      />
+    )
+  })() : null
 
   if (useAgGrid) {
     return (
       <div style={{ padding: 24 }}>
         {uniqueGroups.map(g => <CodeOptionsLoader key={g} groupCd={g} onLoaded={handleCodeLoaded} />)}
         <Title level={4} style={{ marginBottom: 16 }}>{schema.screenNm}</Title>
+        {dataErrorBanner}
         <AgGridBody schema={schema} screenId={screenId} onSelect={onSelect} popupMode={popupMode} height={500} />
       </div>
     )
@@ -694,10 +1092,11 @@ const GridRenderer: React.FC<{
     <div style={{ padding: 24 }}>
       {uniqueGroups.map(g => <CodeOptionsLoader key={g} groupCd={g} onLoaded={handleCodeLoaded} />)}
       <Title level={4} style={{ marginBottom: 16 }}>{schema.screenNm}</Title>
+      {dataErrorBanner}
 
-      {searchFields.length > 0 && (
+      {(searchFields.length > 0 || schema.canCreate || showExcelDownload) && !popupMode && (
         <Card size="small" style={{ marginBottom: 16 }}>
-          <Row gutter={12} align="middle">
+          <Row gutter={[12, 8]} align="middle">
             {searchFields.map(f => (
               <Col key={f.fieldId} span={7}>
                 <Input
@@ -709,11 +1108,51 @@ const GridRenderer: React.FC<{
                 />
               </Col>
             ))}
-            <Col><Button icon={<SearchOutlined />} onClick={doSearch}>검색</Button></Col>
-            {schema.canCreate && !popupMode && (
+            {searchFields.length > 0 && (
+              <Col><Button icon={<SearchOutlined />} onClick={doSearch}>검색</Button></Col>
+            )}
+            <Col flex="auto" />
+            {showExcelDownload && (
+              <Col>
+                <Button icon={<FileExcelOutlined />} onClick={handleExcelDownload} style={{ color: '#1d6f42', borderColor: '#1d6f42' }}>
+                  엑셀 다운로드
+                </Button>
+              </Col>
+            )}
+            {schema.canCreate && (
               <Col>
                 <Button type="primary" icon={<PlusOutlined />}
-                  onClick={() => { setEditRow(null); setModalOpen(true) }}>등록</Button>
+                  onClick={(e) => { setEditRow(null); openModal(e) }}>등록</Button>
+              </Col>
+            )}
+            {/* 그리드 사이즈 컨트롤 */}
+            {!popupMode && (
+              <Col>
+                <Space size={2}>
+                  <Button
+                    size="small" title="넓게"
+                    type={tableSize === 'large' ? 'primary' : 'default'}
+                    icon={<AppstoreOutlined />}
+                    onClick={() => setTableSize('large')}
+                  />
+                  <Button
+                    size="small" title="보통"
+                    type={tableSize === 'middle' ? 'primary' : 'default'}
+                    icon={<MenuOutlined />}
+                    onClick={() => setTableSize('middle')}
+                  />
+                  <Button
+                    size="small" title="좁게"
+                    type={tableSize === 'small' ? 'primary' : 'default'}
+                    icon={<CompressOutlined />}
+                    onClick={() => setTableSize('small')}
+                  />
+                  <Button
+                    size="small" title="컬럼 폭 초기화"
+                    icon={<ColumnWidthOutlined />}
+                    onClick={() => setColWidths({})}
+                  />
+                </Space>
               </Col>
             )}
           </Row>
@@ -722,21 +1161,38 @@ const GridRenderer: React.FC<{
 
       <Table
         dataSource={data?.rows ?? []}
-        columns={columns}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        columns={columns as any}
+        components={{ header: { cell: ResizableTitle } }}
         rowKey="_dataId"
         loading={isLoading}
-        size="middle"
-        pagination={{ current: page, total: data?.total ?? 0, pageSize: 20, onChange: setPage, showTotal: t => `총 ${t}건` }}
-        onRow={popupMode ? row => ({ onDoubleClick: () => onSelect?.(row as Record<string, unknown>) }) : undefined}
+        size={tableSize}
+        scroll={{ x: 'max-content' }}
+        pagination={{
+          current: page,
+          total: data?.total ?? 0,
+          pageSize,
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50', '100'],
+          onChange: (p, ps) => { setPage(p); if (ps !== pageSize) { setPageSize(ps); setPage(1) } },
+          showTotal: t => `총 ${t}건`,
+        }}
+        onRow={onSelect ? (row) => ({
+          onClick: () => {
+            const r = row as unknown as Record<string, unknown>
+            onSelect(r)
+            setSelectedRowKey(r._dataId)
+          },
+          style: { cursor: 'pointer', background: selectedRowKey === (row as unknown as Record<string, unknown>)._dataId ? '#e6f4ff' : undefined },
+        }) : undefined}
       />
 
-      <Modal
+      <ZoomModal
         title={editRow?._dataId ? '수정' : '신규 등록'}
         open={modalOpen}
-        onCancel={() => { setModalOpen(false); setEditRow(null) }}
-        footer={null}
+        onClose={() => { closeModal(); setEditRow(null) }}
+        triggerEl={modalTriggerEl}
         width={680}
-        destroyOnHidden
       >
         <FormBody
           schema={schema}
@@ -744,14 +1200,100 @@ const GridRenderer: React.FC<{
           initialValues={editRow ?? {}}
           compact
           onSuccess={() => {
-            setModalOpen(false)
+            closeModal()
             setEditRow(null)
             queryClient.invalidateQueries({ queryKey: ['bizData', screenId] })
           }}
         />
-      </Modal>
+      </ZoomModal>
     </div>
   )
+}
+
+// ─── 외부 화면 연결 섹션 렌더러 (screenId가 설정된 섹션 전용) ──
+const LinkedSectionContent: React.FC<{
+  section: ScreenSection
+  masterRow: Record<string, unknown> | null
+  isMaster: boolean
+  onMasterSelect?: (row: Record<string, unknown>) => void
+}> = ({ section, masterRow, isMaster, onMasterSelect }) => {
+  const { data: linkedSchema, isLoading } = useQuery<ScreenSchema>({
+    queryKey: ['schema', section.screenId],
+    queryFn: () => schemaApi.getSchema(section.screenId!),
+    enabled: !!section.screenId,
+    staleTime: 30_000,
+  })
+
+  // 마스터 행의 linkField 값으로 detail 레코드 조회 (form/detail 섹션만)
+  const linkValue = masterRow && section.linkField ? masterRow[section.linkField] : undefined
+  const { data: linkedRecord } = useQuery<Record<string, unknown> | null>({
+    queryKey: ['bizData', section.screenId, 'linked', String(linkValue ?? '')],
+    queryFn: () =>
+      api.get(`/biz/${section.screenId}`, {
+        params: { [section.linkField!]: linkValue, size: 1 },
+      }).then(r => (r.data.data?.rows?.[0] ?? null)),
+    enabled: !!section.screenId && linkValue !== undefined && section.type === 'form' && section.role === 'detail',
+    staleTime: 0,
+  })
+
+  if (isLoading || !linkedSchema) {
+    return <div style={{ padding: 20, display: 'flex', justifyContent: 'center' }}><QSpinner size={32} /></div>
+  }
+
+  if (section.type === 'grid') {
+    const isDetailGrid = section.role === 'detail' && !!section.linkField
+    if (isDetailGrid && !masterRow) {
+      return (
+        <div style={{ padding: '40px 24px', textAlign: 'center', color: '#aaa' }}>
+          <TableOutlined style={{ fontSize: 28, marginBottom: 10, display: 'block', color: '#d9d9d9' }} />
+          <Text type="secondary">위 목록에서 항목을 선택하면 스펙 정보가 표시됩니다</Text>
+        </div>
+      )
+    }
+    const fixedParams = isDetailGrid && masterRow
+      ? { [section.linkField!]: masterRow[section.linkField!] }
+      : undefined
+    return (
+      <AgGridBody
+        schema={linkedSchema}
+        screenId={section.screenId!}
+        height={section.height ?? 300}
+        onSelect={isMaster ? onMasterSelect : undefined}
+        fixedParams={fixedParams}
+      />
+    )
+  }
+
+  if (section.type === 'form') {
+    const isDetail = section.role === 'detail'
+    if (isDetail && !masterRow) {
+      return (
+        <div style={{ padding: '40px 24px', textAlign: 'center', color: '#aaa' }}>
+          <TableOutlined style={{ fontSize: 28, marginBottom: 10, display: 'block', color: '#d9d9d9' }} />
+          <Text type="secondary">위 목록에서 항목을 선택하면 상세 정보가 표시됩니다</Text>
+        </div>
+      )
+    }
+    const formKey = `linked:${section.screenId}:${String(linkValue ?? 'empty')}`
+    // 기존 레코드가 있으면 그 값으로, 없으면 linkField 값만 채운 빈 폼
+    const initValues: Record<string, unknown> = linkedRecord
+      ? linkedRecord
+      : masterRow && section.linkField
+        ? { [section.linkField]: linkValue }
+        : {}
+    return (
+      <div style={{ padding: '16px' }}>
+        <FormBody
+          key={formKey}
+          schema={linkedSchema}
+          screenId={section.screenId!}
+          initialValues={initValues}
+        />
+      </div>
+    )
+  }
+
+  return null
 }
 
 // ─── 섹션별 렌더러 (composite 레이아웃) ─────────────────────
@@ -759,54 +1301,123 @@ const CompositeRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = 
   const layoutCfg = getLayoutConfig(schema.layoutConfig)
   const sections = (layoutCfg.sections ?? []) as ScreenSection[]
 
+  // 마스터 섹션별 선택된 행 (sectionId → selectedRow)
+  const [masterData, setMasterData] = useState<Record<string, Record<string, unknown> | null>>({})
+
   if (sections.length === 0) {
     return <FormRenderer schema={schema} screenId={screenId} />
   }
 
-  // 어느 섹션에도 fieldIds로 명시 등록되지 않은 필드를 찾아 누락 없이 표시
   const claimedFieldIds = new Set(sections.flatMap(s => s.fieldIds ?? []))
   const hasExplicitFieldIds = claimedFieldIds.size > 0
   const unclaimedFields = hasExplicitFieldIds
     ? schema.fields.filter(f => !claimedFieldIds.has(f.fieldId))
     : []
 
-  const renderSectionContent = (section: ScreenSection, sectionFields: typeof schema.fields) => (
-    <div style={{
-      border: '1px solid #e8e8e8',
-      borderTop: section.title ? 'none' : '1px solid #e8e8e8',
-      borderRadius: section.title ? '0 0 6px 6px' : 6,
-      padding: '16px',
-      background: '#fff',
-    }}>
-      {section.type === 'form' && (
-        <FormBody schema={schema} screenId={screenId} fields={sectionFields} />
-      )}
-      {section.type === 'grid' && (
-        <AgGridBody schema={schema} screenId={screenId} height={350} />
-      )}
-      {section.type === 'editor' && sectionFields[0] && (
-        <div>
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>
-            {sectionFields[0].fieldLabel}
-          </Text>
-          <RichTextEditor
-            placeholder={sectionFields[0].placeholder}
-            minHeight={250}
+  const handleMasterSelect = useCallback((sectionId: string) => (row: Record<string, unknown>) => {
+    setMasterData(prev => ({ ...prev, [sectionId]: row }))
+  }, [])
+
+  const renderSectionContent = (section: ScreenSection, sectionFields: typeof schema.fields) => {
+    const isMaster = section.role === 'master'
+    const isDetail = section.role === 'detail'
+
+    // ── 별도 화면(외부 테이블) 연결 섹션 ──────────────────────
+    if (section.screenId) {
+      const masterRow = isDetail && section.masterSectionId
+        ? (masterData[section.masterSectionId] ?? null)
+        : null
+      return (
+        <div style={{
+          border: '1px solid #e8e8e8',
+          borderTop: section.title ? 'none' : '1px solid #e8e8e8',
+          borderRadius: section.title ? '0 0 6px 6px' : 6,
+          background: '#fff',
+          overflow: 'hidden',
+        }}>
+          <LinkedSectionContent
+            section={section}
+            masterRow={masterRow}
+            isMaster={isMaster}
+            onMasterSelect={isMaster ? handleMasterSelect(section.id) : undefined}
           />
         </div>
-      )}
-      {section.type === 'canvas' && (
-        (section as { canvasConfig?: CanvasConfig }).canvasConfig
-          ? <CanvasPageRenderer
-              config={(section as { canvasConfig: CanvasConfig }).canvasConfig}
-              screenId={screenId}
-            />
-          : <div style={{ padding: 20, textAlign: 'center', color: '#bbb', border: '1px dashed #ddd', borderRadius: 6 }}>
-              캔버스 섹션 (설계 필요)
+      )
+    }
+
+    // ── 동일 화면 내 섹션 (기존 로직) ──────────────────────────
+    const detailValues: Record<string, unknown> | null =
+      isDetail && section.masterSectionId
+        ? (masterData[section.masterSectionId] ?? null)
+        : null
+
+    const rowKey = detailValues
+      ? String(detailValues._dataId ?? JSON.stringify(Object.values(detailValues).slice(0, 3)))
+      : 'empty'
+    const formKey = `${section.id}:${section.masterSectionId ?? ''}:${rowKey}`
+
+    const gridSchema = sectionFields.length > 0 && sectionFields.length < schema.fields.length
+      ? { ...schema, fields: sectionFields }
+      : schema
+
+    return (
+      <div style={{
+        border: '1px solid #e8e8e8',
+        borderTop: section.title ? 'none' : '1px solid #e8e8e8',
+        borderRadius: section.title ? '0 0 6px 6px' : 6,
+        background: '#fff',
+        overflow: 'hidden',
+      }}>
+        {section.type === 'form' && (
+          isDetail && !detailValues ? (
+            <div style={{ padding: '40px 24px', textAlign: 'center', color: '#aaa' }}>
+              <TableOutlined style={{ fontSize: 28, marginBottom: 10, display: 'block', color: '#d9d9d9' }} />
+              <Text type="secondary">위 목록에서 항목을 선택하면 상세 정보가 표시됩니다</Text>
             </div>
-      )}
-    </div>
-  )
+          ) : (
+            <div style={{ padding: '16px' }}>
+              <FormBody
+                key={formKey}
+                schema={schema}
+                screenId={screenId}
+                fields={sectionFields}
+                initialValues={detailValues ?? {}}
+              />
+            </div>
+          )
+        )}
+        {section.type === 'grid' && (
+          <AgGridBody
+            schema={gridSchema}
+            screenId={screenId}
+            height={section.height ?? 300}
+            onSelect={isMaster ? handleMasterSelect(section.id) : undefined}
+          />
+        )}
+        {section.type === 'editor' && sectionFields[0] && (
+          <div style={{ padding: '16px' }}>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>
+              {sectionFields[0].fieldLabel}
+            </Text>
+            <RichTextEditor
+              placeholder={sectionFields[0].placeholder}
+              minHeight={250}
+            />
+          </div>
+        )}
+        {section.type === 'canvas' && (
+          (section as { canvasConfig?: CanvasConfig }).canvasConfig
+            ? <CanvasPageRenderer
+                config={(section as { canvasConfig: CanvasConfig }).canvasConfig}
+                screenId={screenId}
+              />
+            : <div style={{ padding: 20, textAlign: 'center', color: '#bbb', border: '1px dashed #ddd', borderRadius: 6 }}>
+                캔버스 섹션 (설계 필요)
+              </div>
+        )}
+      </div>
+    )
+  }
 
   const renderSectionHeader = (section: ScreenSection) =>
     section.title ? (
@@ -820,6 +1431,12 @@ const CompositeRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = 
         {section.type === 'editor' && <FileTextOutlined style={{ color: '#4096ff' }} />}
         {section.type === 'canvas' && <span style={{ color: '#4096ff' }}>🎨</span>}
         <Text strong style={{ color: '#1677ff' }}>{section.title}</Text>
+        {section.role === 'master' && (
+          <Tag color="blue" style={{ marginLeft: 'auto', fontSize: 11, marginRight: 0 }}>마스터</Tag>
+        )}
+        {section.role === 'detail' && (
+          <Tag color="green" style={{ marginLeft: 'auto', fontSize: 11, marginRight: 0 }}>디테일</Tag>
+        )}
       </div>
     ) : null
 
@@ -827,7 +1444,6 @@ const CompositeRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = 
     <div style={{ padding: 24 }}>
       <Title level={4} style={{ marginBottom: 20 }}>{schema.screenNm}</Title>
       {sections.map((section, idx) => {
-        // fieldIds가 없는 섹션은 아직 어느 섹션에도 배정되지 않은 필드를 보여줌
         const sectionFields = section.fieldIds
           ? schema.fields.filter(f => section.fieldIds!.includes(f.fieldId))
           : hasExplicitFieldIds
@@ -842,7 +1458,6 @@ const CompositeRenderer: React.FC<{ schema: ScreenSchema; screenId: string }> = 
         )
       })}
 
-      {/* fieldIds로 지정된 섹션이 있고 배정되지 않은 필드가 있으면 자동으로 표시 */}
       {unclaimedFields.length > 0 && !sections.some(s => !s.fieldIds) && (
         <div style={{ marginBottom: 20 }}>
           <FormBody schema={schema} screenId={screenId} fields={unclaimedFields} />
@@ -913,7 +1528,7 @@ export const ScreenRenderer: React.FC<ExtendedProps> = ({
   const { data: schema, isLoading, error } = useQuery<ScreenSchema>({
     queryKey: ['schema', screenId],
     queryFn: () => schemaApi.getSchema(screenId),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
   })
 
   const addTab = useTabStore(s => s.addTab)
@@ -925,8 +1540,41 @@ export const ScreenRenderer: React.FC<ExtendedProps> = ({
     }
   }, [schema, ignoreOpenType, addTab])
 
-  if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '60px auto' }} />
-  if (error || !schema) return <Alert type="error" message="화면 스키마를 불러오지 못했습니다." />
+  if (isLoading) return <div style={{ display: 'flex', justifyContent: 'center', margin: '80px 0' }}><QSpinner size={72} /></div>
+  if (error || !schema) {
+    const axiosErr = error as { response?: { data?: { message?: string; error?: string }; status?: number }; message?: string } | null
+    const httpStatus = axiosErr?.response?.status
+    const serverMsg = axiosErr?.response?.data?.message ?? axiosErr?.response?.data?.error
+    const errMsg = serverMsg ?? axiosErr?.message ?? '알 수 없는 오류'
+    return (
+      <div style={{ padding: 32 }}>
+        <Alert
+          type="error"
+          showIcon
+          message={`화면 스키마 로드 실패 — ${screenId}`}
+          description={
+            <div>
+              {httpStatus && <Tag color="red" style={{ marginBottom: 6 }}>HTTP {httpStatus}</Tag>}
+              <div style={{ marginBottom: 8 }}>{errMsg}</div>
+              {(error as Error)?.stack && (
+                <Collapse size="small" items={[{
+                  key: '1',
+                  label: '스택 트레이스 (개발자용)',
+                  children: (
+                    <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                      background: '#1e1e1e', color: '#d4d4d4', padding: 10, borderRadius: 4,
+                      maxHeight: 200, overflowY: 'auto', margin: 0 }}>
+                      {(error as Error).stack}
+                    </pre>
+                  ),
+                }]} />
+              )}
+            </div>
+          }
+        />
+      </div>
+    )
+  }
 
   const renderContent = () => {
     switch (schema.screenType) {
@@ -986,11 +1634,17 @@ export const ScreenRenderer: React.FC<ExtendedProps> = ({
             <Tag color="blue">팝업</Tag>
             <Text strong>{schema.screenNm}</Text>
           </div>
-          {renderContent()}
+          <ScreenErrorBoundary screenId={screenId}>
+            {renderContent()}
+          </ScreenErrorBoundary>
         </div>
       </div>
     )
   }
 
-  return renderContent()
+  return (
+    <ScreenErrorBoundary screenId={screenId}>
+      {renderContent()}
+    </ScreenErrorBoundary>
+  )
 }

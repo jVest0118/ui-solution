@@ -64,6 +64,9 @@ public class FieldDef {
     @Column(name = "hidden_yn", length = 1)
     private String hiddenYn = "N";
 
+    @Column(name = "use_yn", length = 1)
+    private String useYn = "Y";
+
     @Column(name = "code_group", length = 50)
     private String codeGroup;
 
@@ -72,6 +75,10 @@ public class FieldDef {
 
     @Column(name = "extra_config", columnDefinition = "TEXT")
     private String extraConfig;
+
+    // 실제 DB 컬럼명 (테이블 매핑 시 사용, null이면 fieldNm을 컬럼명으로 사용)
+    @Column(name = "column_nm", length = 100)
+    private String columnNm;
 
     @OneToMany(mappedBy = "fieldDef", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("sortOrder ASC")
@@ -91,8 +98,9 @@ public class FieldDef {
     public void updateAll(String fieldNm, String fieldLabel, String fieldType,
                           String placeholder, String defaultValue,
                           int colSpan, int rowSpan, int sortOrder,
-                          String readonlyYn, String hiddenYn, String codeGroup, String extraConfig,
-                          int rowPos, int colPos) {
+                          String readonlyYn, String hiddenYn, String useYn,
+                          String codeGroup, String extraConfig,
+                          int rowPos, int colPos, String columnNm) {
         this.fieldNm = fieldNm;
         this.fieldLabel = fieldLabel;
         this.fieldType = fieldType;
@@ -103,9 +111,11 @@ public class FieldDef {
         this.sortOrder = sortOrder;
         this.readonlyYn = readonlyYn;
         this.hiddenYn = hiddenYn;
+        this.useYn = useYn;
         this.codeGroup = codeGroup;
         this.extraConfig = extraConfig;
         this.rowPos = rowPos;
         this.colPos = colPos;
+        this.columnNm = columnNm;
     }
 }

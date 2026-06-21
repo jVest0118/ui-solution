@@ -4,6 +4,7 @@ import {
   Tag, Tooltip, message, Alert, Typography, Badge, Divider, Row, Col,
   InputNumber, Empty, Switch
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined,
   DatabaseOutlined, CheckCircleOutlined, CloseCircleOutlined,
@@ -329,9 +330,10 @@ const DataSourceManager: React.FC<DataSourceManagerProps> = ({ screenId, open, o
     setTestLoading(true)
     setTestResult(null)
     try {
+      const currentSql = form.getFieldValue('sqlText') as string | undefined
       const res = await api.post(
         `/schema/admin/screens/${screenId}/data-sources/${editingItem.id}/test`,
-        { testParams }
+        { testParams, sqlText: currentSql ?? '' }
       )
       setTestResult(res.data.data)
     } catch (err: unknown) {
@@ -454,7 +456,7 @@ const DataSourceManager: React.FC<DataSourceManagerProps> = ({ screenId, open, o
       </Drawer>
 
       {/* ─ 추가/편집 모달 ─ */}
-      <Modal
+      <ResizableModal
         title={
           <Space>
             <DatabaseOutlined />
@@ -468,7 +470,6 @@ const DataSourceManager: React.FC<DataSourceManagerProps> = ({ screenId, open, o
         okText="저장"
         width={740}
         destroyOnHidden
-        styles={{ body: { maxHeight: '78vh', overflowY: 'auto' } }}
       >
         <Form form={form} layout="vertical" onFinish={(v) => saveMutation.mutate(v as Record<string, unknown>)}>
 
@@ -645,7 +646,7 @@ const DataSourceManager: React.FC<DataSourceManagerProps> = ({ screenId, open, o
             </div>
           )}
         </Form>
-      </Modal>
+      </ResizableModal>
     </>
   )
 }

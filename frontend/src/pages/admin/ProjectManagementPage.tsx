@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Tag, message, Typography } from 'antd'
 import { PlusOutlined, EditOutlined } from '@ant-design/icons'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/api/axios'
 
@@ -52,7 +53,7 @@ const ProjectManagementPage: React.FC = () => {
       </div>
       <Table dataSource={data ?? []} columns={columns} rowKey="projectId" loading={isLoading} size="middle" />
 
-      <Modal title="프로젝트 등록/수정" open={open} onOk={() => form.submit()} onCancel={() => setOpen(false)} okText="저장">
+      <ResizableModal title="프로젝트 등록/수정" open={open} onOk={() => form.submit()} onCancel={() => setOpen(false)} okText="저장">
         <Form form={form} layout="vertical" onFinish={saveMutation.mutate}>
           <Form.Item name="projectId" label="프로젝트ID" rules={[{ required: true, message: '프로젝트ID를 입력하세요' }]}>
             <Input placeholder="예: HR_SYSTEM" style={{ textTransform: 'uppercase' }} />
@@ -70,7 +71,7 @@ const ProjectManagementPage: React.FC = () => {
             <Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

@@ -25,15 +25,15 @@ CREATE TABLE IF NOT EXISTS db_connection (
     CONSTRAINT pk_db_connection PRIMARY KEY (conn_id)
 );
 
--- 현재 시스템 H2 DB를 기본 연결로 등록
+-- 시스템 MySQL DB를 기본 연결로 등록
 INSERT INTO db_connection (
     conn_id, conn_name, db_type,
     jdbc_url, username, password,
     is_xa, is_active, is_default,
     test_query, description
 ) VALUES (
-    'SYSTEM_DB', '시스템 DB (H2)', 'H2',
-    'jdbc:h2:file:./data/uisolution;MODE=PostgreSQL', 'sa', '',
+    'SYSTEM_DB', '시스템 DB (MySQL)', 'MYSQL',
+    'jdbc:mysql://localhost:3306/uisolution?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul', 'uisolution', 'uisolution123',
     'N', 'Y', 'Y',
     'SELECT 1', '플랫폼 시스템 데이터베이스 (시스템 관리용)'
 );

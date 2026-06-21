@@ -7,6 +7,7 @@ import com.uisolution.platform.schema.entity.ValidationRule;
 import lombok.Builder;
 import lombok.Getter;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -23,6 +24,10 @@ public class ScreenSchemaDto {
     private Object buttonConfig;
     private int version;
     private String openType;
+    private String datasourceType;
+    private String tableNm;
+    private String pkColumn;
+    private String dbConnId;
     private List<FieldDto> fields;
 
     // 권한 정보 (로그인 사용자 롤 기반) - 빌더 후 grantAllPermissions()로 변경 가능
@@ -52,6 +57,7 @@ public class ScreenSchemaDto {
         private boolean hidden;
         private String codeGroup;
         private String popupScreenId;
+        private String columnNm;
         @JsonRawValue
         private String extraConfig;
         private List<ValidationRuleDto> validationRules;
@@ -78,6 +84,9 @@ public class ScreenSchemaDto {
 
     public static ScreenSchemaDto from(ScreenDef screen) {
         List<FieldDto> fieldDtos = screen.getFields().stream()
+                .filter(f -> f.getUseYn() == null || "Y".equals(f.getUseYn()))
+                .sorted(Comparator.comparingInt(FieldDef::getRowPos)
+                        .thenComparingInt(FieldDef::getColPos))
                 .map(ScreenSchemaDto::toFieldDto)
                 .collect(Collectors.toList());
 
@@ -91,6 +100,10 @@ public class ScreenSchemaDto {
                 .buttonConfig(screen.getButtonConfig())
                 .version(screen.getVersion())
                 .openType(screen.getOpenType() != null ? screen.getOpenType() : "page")
+                .datasourceType(screen.getDatasourceType() != null ? screen.getDatasourceType() : "biz_data")
+                .tableNm(screen.getTableNm())
+                .pkColumn(screen.getPkColumn() != null ? screen.getPkColumn() : "id")
+                .dbConnId(screen.getDbConnId())
                 .fields(fieldDtos)
                 .canRead(true)
                 .canCreate(false)
@@ -129,6 +142,7 @@ public class ScreenSchemaDto {
                 .hidden("Y".equals(field.getHiddenYn()))
                 .codeGroup(field.getCodeGroup())
                 .popupScreenId(field.getPopupScreenId())
+                .columnNm(field.getColumnNm())
                 .extraConfig(field.getExtraConfig())
                 .validationRules(ruleDtos)
                 .build();

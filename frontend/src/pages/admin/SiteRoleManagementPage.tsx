@@ -3,6 +3,7 @@ import {
   Table, Button, Modal, Form, Input, Select, Space, Tag, message,
   Typography, Tabs, Checkbox, Tooltip, Popconfirm, Row, Col, Card,
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, UserAddOutlined, LockOutlined,
 } from '@ant-design/icons'
@@ -325,7 +326,7 @@ const SiteRoleManagementPage: React.FC = () => {
       )}
 
       {/* 역할 등록/수정 모달 */}
-      <Modal
+      <ResizableModal
         title="역할 설정"
         open={roleModalOpen}
         onOk={() => form.submit()}
@@ -351,10 +352,10 @@ const SiteRoleManagementPage: React.FC = () => {
             <Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResizableModal>
 
       {/* 사용자 배정 모달 */}
-      <Modal
+      <ResizableModal
         title="사용자 배정"
         open={userModalOpen}
         footer={null}
@@ -387,7 +388,7 @@ const SiteRoleManagementPage: React.FC = () => {
             },
           ]}
         />
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

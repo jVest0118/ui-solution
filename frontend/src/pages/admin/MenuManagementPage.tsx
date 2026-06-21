@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Tag, message, Typography } from 'antd'
 import { PlusOutlined, EditOutlined } from '@ant-design/icons'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/api/axios'
 
@@ -46,7 +47,7 @@ const MenuManagementPage: React.FC = () => {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>메뉴 등록</Button>
       </div>
       <Table dataSource={data ?? []} columns={columns} rowKey="menuId" loading={isLoading} size="middle" />
-      <Modal title="메뉴 등록/수정" open={open} onOk={() => form.submit()} onCancel={() => setOpen(false)} okText="저장">
+      <ResizableModal title="메뉴 등록/수정" open={open} onOk={() => form.submit()} onCancel={() => setOpen(false)} okText="저장">
         <Form form={form} layout="vertical" onFinish={saveMutation.mutate}>
           <Form.Item name="menuId" label="메뉴ID" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="parentId" label="상위메뉴"><Select options={menuOptions} allowClear placeholder="최상위 메뉴" /></Form.Item>
@@ -58,7 +59,7 @@ const MenuManagementPage: React.FC = () => {
             <Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

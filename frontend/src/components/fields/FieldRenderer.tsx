@@ -624,6 +624,7 @@ export const FieldRenderer: React.FC<Props> = ({
     case 'text': {
       const behavior = extraConfig.behavior as string | undefined
       const isNameField = behavior === 'name'
+      const align = (extraConfig.align as 'left' | 'center' | 'right' | undefined) ?? 'left'
       return (
         <Input
           {...commonProps}
@@ -635,6 +636,7 @@ export const FieldRenderer: React.FC<Props> = ({
           }}
           onBlur={handleBlur}
           status={status}
+          style={{ textAlign: align }}
         />
       )
     }
@@ -669,12 +671,24 @@ export const FieldRenderer: React.FC<Props> = ({
       return (
         <InputNumber
           {...commonProps}
+          className="field-number-right"
           value={value as number}
-          onChange={(val) => { handleChange(val); handleBlur() }}
+          onChange={(val) => handleChange(val)}
+          onBlur={handleBlur}
           status={status}
           style={{ width: '100%' }}
           min={extraConfig.min as number}
           max={extraConfig.max as number}
+          formatter={(val, { userTyping }) => {
+            if (userTyping) return `${val ?? ''}`
+            if (val == null) return ''
+            const n = Number(val)
+            return isNaN(n) ? `${val}` : n.toLocaleString()
+          }}
+          parser={(val) => {
+            const n = Number(String(val ?? '').replace(/,/g, ''))
+            return isNaN(n) ? 0 : n
+          }}
         />
       )
 
@@ -837,6 +851,19 @@ export const FieldRenderer: React.FC<Props> = ({
           style={{ width: '100%' }}
           format={(extraConfig.format as string) ?? 'YYYY-MM-DD'}
         />
+      )
+    }
+
+    case 'display': {
+      const displayVal = value != null && value !== '' ? String(value) : (field.defaultValue ?? '-')
+      return (
+        <div style={{
+          display: 'flex', alignItems: 'center',
+          minHeight: 32, padding: '4px 0',
+          borderBottom: '1px solid #f0f0f0',
+        }}>
+          <Text style={{ fontSize: 14, color: '#1d1d1d' }}>{displayVal}</Text>
+        </div>
       )
     }
 

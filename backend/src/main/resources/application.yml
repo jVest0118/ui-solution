@@ -1,25 +1,12 @@
 spring:
   # ─────────────────────────────────────────
-  # DB 설정 - 현재: H2 파일 모드 (설치 불필요)
-  # PostgreSQL 전환 시 아래 주석 참고
+  # DB 설정 - MySQL 8.4
   # ─────────────────────────────────────────
   datasource:
-    url: jdbc:h2:file:./data/uisolution;MODE=PostgreSQL;AUTO_SERVER=TRUE
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
-
-  # PostgreSQL 전환 시 위 datasource 블록을 아래로 교체:
-  # datasource:
-  #   url: jdbc:postgresql://localhost:5432/uisolution
-  #   username: uisolution
-  #   password: uisolution123
-  #   driver-class-name: org.postgresql.Driver
-
-  h2:
-    console:
-      enabled: true          # http://localhost:8080/api/h2-console 에서 DB 확인 가능
-      path: /h2-console
+    url: jdbc:mysql://localhost:3306/uisolution?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul&allowPublicKeyRetrieval=true&useSSL=false
+    username: uisolution
+    password: uisolution123
+    driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
     hibernate:
@@ -27,10 +14,7 @@ spring:
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.H2Dialect
         format_sql: true
-    # PostgreSQL 전환 시 dialect 를 아래로 교체:
-    # dialect: org.hibernate.dialect.PostgreSQLDialect
 
   flyway:
     enabled: true

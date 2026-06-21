@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Tag, message, Typography } from 'antd'
 import { PlusOutlined, EditOutlined } from '@ant-design/icons'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/api/axios'
 
@@ -43,7 +44,7 @@ const RoleManagementPage: React.FC = () => {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>롤 등록</Button>
       </div>
       <Table dataSource={data ?? []} columns={columns} rowKey="roleId" loading={isLoading} size="middle" />
-      <Modal title="롤 등록/수정" open={open} onOk={() => form.submit()} onCancel={() => setOpen(false)} okText="저장">
+      <ResizableModal title="롤 등록/수정" open={open} onOk={() => form.submit()} onCancel={() => setOpen(false)} okText="저장">
         <Form form={form} layout="vertical" onFinish={saveMutation.mutate}>
           <Form.Item name="roleId" label="롤ID" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="roleNm" label="롤명" rules={[{ required: true }]}><Input /></Form.Item>
@@ -53,7 +54,7 @@ const RoleManagementPage: React.FC = () => {
             <Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

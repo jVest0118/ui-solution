@@ -23,18 +23,18 @@ CREATE TABLE IF NOT EXISTS role_project (
 );
 
 -- Add project_id to screen_def (nullable: NULL not used currently, all screens belong to a project)
-ALTER TABLE screen_def ADD COLUMN IF NOT EXISTS project_id VARCHAR(50);
-ALTER TABLE screen_def ADD CONSTRAINT IF NOT EXISTS fk_screen_project
+ALTER TABLE screen_def ADD COLUMN project_id VARCHAR(50);
+ALTER TABLE screen_def ADD CONSTRAINT fk_screen_project
     FOREIGN KEY (project_id) REFERENCES project(project_id);
 
 -- Add project_id to menu_def (NULL = platform menu, non-null = project menu)
-ALTER TABLE menu_def ADD COLUMN IF NOT EXISTS project_id VARCHAR(50);
-ALTER TABLE menu_def ADD CONSTRAINT IF NOT EXISTS fk_menu_project
+ALTER TABLE menu_def ADD COLUMN project_id VARCHAR(50);
+ALTER TABLE menu_def ADD CONSTRAINT fk_menu_project
     FOREIGN KEY (project_id) REFERENCES project(project_id);
 
 -- Add project_id to code_group (NULL = platform code, non-null = project business code)
-ALTER TABLE code_group ADD COLUMN IF NOT EXISTS project_id VARCHAR(50);
-ALTER TABLE code_group ADD CONSTRAINT IF NOT EXISTS fk_cg_project
+ALTER TABLE code_group ADD COLUMN project_id VARCHAR(50);
+ALTER TABLE code_group ADD CONSTRAINT fk_cg_project
     FOREIGN KEY (project_id) REFERENCES project(project_id);
 
 -- Default project

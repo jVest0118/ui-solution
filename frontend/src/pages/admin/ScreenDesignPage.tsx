@@ -1,18 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react'
 import {
-  Button, Modal, Form, Input, Select, InputNumber, Switch,
+  Button, Modal, Form, Input, Select, InputNumber, Switch, Radio,
   message, Typography, Card, Row, Col, Divider, Space, Tooltip,
-  Badge, AutoComplete, Collapse, Tabs, Popconfirm, Tag, Checkbox, Alert, Drawer
+  Badge, AutoComplete, Collapse, Tabs, Popconfirm, Tag, Checkbox, Alert, Drawer,
+  Dropdown, Grid,
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined,
   ArrowLeftOutlined, InfoCircleOutlined, ThunderboltOutlined,
   AppstoreAddOutlined, CopyOutlined, TableOutlined, BranchesOutlined, CloseOutlined,
-  DatabaseOutlined
+  DatabaseOutlined, MoreOutlined, DownOutlined, ExpandAltOutlined,
+  AlignLeftOutlined, AlignCenterOutlined, AlignRightOutlined,
 } from '@ant-design/icons'
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor,
-  useSensor, useSensors, DragOverlay, useDraggable, useDroppable
+  useSensor, useSensors, DragOverlay, useDraggable, useDroppable,
 } from '@dnd-kit/core'
 import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
@@ -21,6 +23,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import api from '@/api/axios'
 import { useAuthStore } from '@/store/authStore'
 import { ScreenRenderer } from '@/components/renderer/ScreenRenderer'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import DataSourceManager, { DataBindingEditor } from '@/components/admin/DataSourceManager'
 import { GridFieldConfig } from '@/components/fields/GridFieldConfig'
 import type { GridConfig } from '@/components/fields/GridFieldConfig'
@@ -77,6 +80,7 @@ const FIELD_TYPES = [
   { value: 'file',       label: 'File Upload' },
   { value: 'popup',      label: 'Popup Search' },
   // ─── 표시 전용 ──────────────────────────────
+  { value: 'display',        label: '데이터 표시 (레이블:값)' },
   { value: 'info-banner',    label: 'Info Banner (안내 배너)' },
   { value: 'stat-card',      label: 'Stat Card (통계 카드)' },
   // ─── 캔버스 섹션 ─────────────────────────────
@@ -133,7 +137,9 @@ interface Field {
   colPos: number
   readonlyYn: string
   hiddenYn: string
+  useYn: string
   codeGroup?: string
+  columnNm?: string
   extraConfig?: Record<string, unknown>
 }
 
@@ -147,6 +153,10 @@ interface ScreenDetail {
   layoutConfig?: string
   buttonConfig?: string
   openType?: string
+  datasourceType?: string
+  tableNm?: string
+  pkColumn?: string
+  dbConnId?: string
   fields: Field[]
 }
 
@@ -190,6 +200,231 @@ const SnakeCaseInput: React.FC<{
     style={{ width: '100%' }}
   />
 )
+
+// ─── 섹션 설정 타입 ──────────────────────────────────────────
+interface SectionConfig {
+  id: string
+  type: 'form' | 'grid' | 'editor' | 'canvas'
+  role?: 'master' | 'detail' | 'independent'
+  masterSectionId?: string
+  screenId?: string    // 별도 화면(다른 테이블) 연결 시 해당 screenId
+  linkField?: string   // master→detail 조인 필드명 (screenId 사용 시)
+  title?: string
+  height?: number
+  fieldIds?: number[]
+}
+
+// ─── 섹션 시각 편집기 ─────────────────────────────────────────
+const SectionEditorUI: React.FC<{
+  sections: SectionConfig[]
+  onChange: (s: SectionConfig[]) => void
+  fields: Field[]
+}> = ({ sections, onChange, fields }) => {
+  // 별도 화면 연결용 화면 목록
+  const { data: screenList = [] } = useQuery<{ screenId: string; screenNm: string }[]>({
+    queryKey: ['adminScreensForSection'],
+    queryFn: () => api.get('/schema/admin/screens').then(r => r.data.data ?? []),
+    staleTime: 30_000,
+  })
+
+  const masterSections = sections.filter(s => s.role === 'master')
+
+  const addSection = () => {
+    const newId = `s${Date.now()}`
+    onChange([...sections, { id: newId, type: 'form', role: 'independent', title: `섹션 ${sections.length + 1}` }])
+  }
+
+  const update = (idx: number, patch: Partial<SectionConfig>) => {
+    onChange(sections.map((s, i) => i === idx ? { ...s, ...patch } : s))
+  }
+
+  const remove = (idx: number) => {
+    onChange(sections.filter((_, i) => i !== idx))
+  }
+
+  const moveUp = (idx: number) => {
+    if (idx === 0) return
+    const next = [...sections]
+    ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+    onChange(next)
+  }
+
+  const moveDown = (idx: number) => {
+    if (idx === sections.length - 1) return
+    const next = [...sections]
+    ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
+    onChange(next)
+  }
+
+  const ROLE_COLOR: Record<string, string> = { master: 'blue', detail: 'green', independent: 'default' }
+  const ROLE_LABEL: Record<string, string> = { master: '마스터', detail: '디테일', independent: '독립' }
+  const TYPE_COLOR: Record<string, string> = { grid: '#1677ff', form: '#52c41a', editor: '#722ed1', canvas: '#fa8c16' }
+
+  return (
+    <div>
+      {sections.length === 0 && (
+        <div style={{ padding: '20px', textAlign: 'center', color: '#aaa', border: '1px dashed #d9d9d9', borderRadius: 6, marginBottom: 8 }}>
+          섹션이 없습니다. 아래 버튼으로 추가하세요.
+        </div>
+      )}
+      {sections.map((sec, idx) => (
+        <Card
+          key={sec.id}
+          size="small"
+          style={{ marginBottom: 8, borderLeft: `3px solid ${TYPE_COLOR[sec.type] ?? '#d9d9d9'}` }}
+          styles={{ body: { padding: '10px 12px' } }}
+          title={
+            <Space size={4}>
+              <Tag color={TYPE_COLOR[sec.type]} style={{ fontSize: 11, margin: 0 }}>{sec.type}</Tag>
+              {sec.role && sec.role !== 'independent' && (
+                <Tag color={ROLE_COLOR[sec.role]} style={{ fontSize: 11, margin: 0 }}>{ROLE_LABEL[sec.role]}</Tag>
+              )}
+              {sec.screenId && <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>외부화면</Tag>}
+              <span style={{ fontWeight: 500, fontSize: 13 }}>{sec.title || `섹션 ${idx + 1}`}</span>
+            </Space>
+          }
+          extra={
+            <Space size={2}>
+              <Button size="small" icon={<span style={{ fontSize: 10 }}>▲</span>} onClick={() => moveUp(idx)} disabled={idx === 0} />
+              <Button size="small" icon={<span style={{ fontSize: 10 }}>▼</span>} onClick={() => moveDown(idx)} disabled={idx === sections.length - 1} />
+              <Button size="small" danger icon={<DeleteOutlined />} onClick={() => remove(idx)} />
+            </Space>
+          }
+        >
+          <Row gutter={[8, 6]}>
+            {/* ── 기본 설정 행 ── */}
+            <Col span={6}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>타입</div>
+              <Select
+                size="small" style={{ width: '100%' }}
+                value={sec.type}
+                onChange={v => update(idx, { type: v as SectionConfig['type'] })}
+                options={[
+                  { value: 'grid',   label: '그리드 (목록)' },
+                  { value: 'form',   label: '폼 (입력/상세)' },
+                  { value: 'editor', label: '에디터 (리치텍스트)' },
+                ]}
+              />
+            </Col>
+            <Col span={6}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>역할</div>
+              <Select
+                size="small" style={{ width: '100%' }}
+                value={sec.role ?? 'independent'}
+                onChange={v => update(idx, { role: v as SectionConfig['role'], masterSectionId: undefined })}
+                options={[
+                  { value: 'independent', label: '독립 (연동 없음)' },
+                  { value: 'master',      label: '마스터 (행 선택)' },
+                  { value: 'detail',      label: '디테일 (마스터 연동)' },
+                ]}
+              />
+            </Col>
+            <Col span={sec.type === 'grid' ? 6 : 12}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>제목</div>
+              <Input
+                size="small"
+                value={sec.title ?? ''}
+                onChange={e => update(idx, { title: e.target.value })}
+                placeholder="섹션 제목 (빈칸 가능)"
+              />
+            </Col>
+            {sec.type === 'grid' && (
+              <Col span={6}>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>높이 (px)</div>
+                <InputNumber
+                  size="small" style={{ width: '100%' }}
+                  min={100} max={1000} step={50}
+                  value={sec.height ?? 300}
+                  onChange={v => update(idx, { height: v ?? 300 })}
+                />
+              </Col>
+            )}
+
+            {/* ── 마스터 연결 (detail 역할일 때) ── */}
+            {sec.role === 'detail' && (
+              <Col span={sec.screenId ? 12 : 24}>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>연결할 마스터 섹션</div>
+                <Select
+                  size="small" style={{ width: '100%' }}
+                  value={sec.masterSectionId}
+                  onChange={v => update(idx, { masterSectionId: v })}
+                  placeholder="마스터 섹션 선택"
+                  options={masterSections
+                    .filter(m => m.id !== sec.id)
+                    .map(m => ({ value: m.id, label: `${m.title || m.id} (마스터)` }))}
+                  notFoundContent="마스터 섹션 없음 (다른 섹션 역할을 '마스터'로 설정)"
+                />
+              </Col>
+            )}
+
+            {/* ── 별도 화면 연결 ── */}
+            <Col span={24}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 4, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Switch
+                  size="small"
+                  checked={!!sec.screenId}
+                  onChange={v => update(idx, { screenId: v ? '' : undefined, linkField: undefined, fieldIds: undefined })}
+                />
+                <span>별도 화면 연결 <span style={{ fontWeight: 400, color: '#aaa' }}>(다른 테이블 사용 시)</span></span>
+              </div>
+              {sec.screenId !== undefined && (
+                <Row gutter={[8, 0]}>
+                  <Col span={sec.role === 'detail' ? 14 : 24}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>연결 화면 (screenId)</div>
+                    <Select
+                      size="small" style={{ width: '100%' }}
+                      showSearch
+                      value={sec.screenId || undefined}
+                      onChange={v => update(idx, { screenId: v })}
+                      placeholder="화면 선택..."
+                      optionFilterProp="label"
+                      options={screenList.map(s => ({
+                        value: s.screenId,
+                        label: `${s.screenNm} (${s.screenId})`,
+                      }))}
+                      notFoundContent="화면 없음"
+                    />
+                  </Col>
+                  {sec.role === 'detail' && (
+                    <Col span={10}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>조인 필드 (linkField)</div>
+                      <Input
+                        size="small"
+                        value={sec.linkField ?? ''}
+                        onChange={e => update(idx, { linkField: e.target.value })}
+                        placeholder="예: product_id"
+                      />
+                    </Col>
+                  )}
+                </Row>
+              )}
+            </Col>
+
+            {/* ── 포함 필드 (별도 화면 미사용 시만) ── */}
+            {!sec.screenId && (
+              <Col span={24}>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>포함 필드 <span style={{ fontWeight: 400 }}>(비워두면 미배정 필드 전체 표시)</span></div>
+                <Select
+                  size="small" mode="multiple" style={{ width: '100%' }}
+                  value={sec.fieldIds ?? []}
+                  onChange={v => update(idx, { fieldIds: v as number[] })}
+                  placeholder="필드 선택..."
+                  optionFilterProp="label"
+                  options={fields
+                    .filter(f => f.fieldId != null)
+                    .map(f => ({ value: f.fieldId!, label: `${f.fieldLabel} (${f.fieldNm})` }))}
+                />
+              </Col>
+            )}
+          </Row>
+        </Card>
+      ))}
+      <Button type="dashed" block icon={<PlusOutlined />} onClick={addSection} style={{ marginTop: 4 }}>
+        섹션 추가
+      </Button>
+    </div>
+  )
+}
 
 // ─── 셀 위치 맵: 어떤 필드가 어느 셀을 차지하는지 ─────────────
 type CellOccupant = Field | 'spanned'
@@ -249,12 +484,12 @@ const DraggableFieldCard: React.FC<{
   })
 
   return (
-    <div ref={setNodeRef} style={{ opacity: isDragging ? 0.25 : 1, height: '100%' }} {...attributes}>
+    <div ref={setNodeRef} style={{ opacity: isDragging ? 0.25 : (field.useYn === 'N' ? 0.45 : 1), height: '100%' }} {...attributes}>
       <Card
         size="small"
         style={{
-          border: `1.5px solid ${TYPE_COLORS[field.fieldType] ?? '#e8e8e8'}40`,
-          background: '#fff', cursor: 'grab', userSelect: 'none', height: '100%',
+          border: `1.5px solid ${field.useYn === 'N' ? '#d9d9d9' : (TYPE_COLORS[field.fieldType] ?? '#e8e8e8') + '40'}`,
+          background: field.useYn === 'N' ? '#fafafa' : '#fff', cursor: 'grab', userSelect: 'none', height: '100%',
         }}
         styles={{ body: { padding: '8px 10px' } }}
       >
@@ -267,6 +502,7 @@ const DraggableFieldCard: React.FC<{
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {field.fieldLabel}
+              {field.useYn === 'N' && <Tag color="default" style={{ fontSize: 10, padding: '0 4px', lineHeight: '16px', marginLeft: 4 }}>미사용</Tag>}
               {field.extraConfig?.events != null && (
                 <ThunderboltOutlined style={{ color: '#fa8c16', marginLeft: 4, fontSize: 11 }} />
               )}
@@ -493,7 +729,7 @@ const CopyFieldsModal: React.FC<{
   }
 
   return (
-    <Modal
+    <ResizableModal
       title={<Space><CopyOutlined />다른 화면에서 필드 복사</Space>}
       open={open}
       onCancel={onClose}
@@ -566,19 +802,49 @@ const CopyFieldsModal: React.FC<{
           </div>
         )
       )}
-    </Modal>
+    </ResizableModal>
   )
 }
+
+// ─── 섹션 헤더 (접기/펼치기) ─────────────────────────────────
+const SectionHeader: React.FC<{
+  title: string
+  collapsed: boolean
+  onToggle: () => void
+}> = ({ title, collapsed, onToggle }) => (
+  <div
+    onClick={onToggle}
+    style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '7px 14px', margin: '12px 0 0',
+      background: 'linear-gradient(90deg, #f0f5ff 0%, #f5f5f5 100%)',
+      borderRadius: 6, cursor: 'pointer', userSelect: 'none',
+      border: '1px solid #d6e4ff',
+    }}
+  >
+    <span style={{ fontWeight: 700, fontSize: 12, color: '#1677ff', letterSpacing: 0.3 }}>{title}</span>
+    <DownOutlined style={{
+      fontSize: 11, color: '#1677ff',
+      transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+      transition: 'transform 0.22s ease',
+    }} />
+  </div>
+)
 
 // ─── 메인 페이지 ─────────────────────────────────────────────
 const ScreenDesignPage: React.FC = () => {
   const { screenId } = useParams<{ screenId?: string }>()
   const navigate = useNavigate()
-  const { currentProject, roles } = useAuthStore()
+  const { currentProject, roles, userId } = useAuthStore()
   const isSysAdmin = roles.includes('SYSTEM_ADMIN')
   const queryClient = useQueryClient()
 
+  const bpScreens = Grid.useBreakpoint()
+  const isMobile = bpScreens.md === false
+
   const [fieldOpen,      setFieldOpen]      = useState(false)
+  const [sectionsOn,     setSectionsOn]     = useState(false)
+  const [localSections,  setLocalSections]  = useState<SectionConfig[]>([])
   const [screenOpen,     setScreenOpen]     = useState(!screenId)
   const [copyOpen,       setCopyOpen]       = useState(false)
   const [gridConfigOpen, setGridConfigOpen] = useState(false)
@@ -593,6 +859,21 @@ const ScreenDesignPage: React.FC = () => {
   const [screenEvents,    setScreenEvents]    = useState<EventBinding[]>([])
   const [eventSaving,     setEventSaving]     = useState(false)
   const [dsDrawerOpen,    setDsDrawerOpen]    = useState(false)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+
+  const toggleSection = (key: string) => setCollapsedSections(prev => {
+    const next = new Set(prev)
+    next.has(key) ? next.delete(key) : next.add(key)
+    return next
+  })
+
+  // localSections → sectionsJson 폼 필드 동기화
+  useEffect(() => {
+    if (sectionsOn) {
+      screenForm.setFieldValue('sectionsJson', JSON.stringify(localSections))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localSections, sectionsOn])
 
   const [fieldForm]  = Form.useForm()
   const [screenForm] = Form.useForm()
@@ -612,6 +893,32 @@ const ScreenDesignPage: React.FC = () => {
     enabled: !!screenId,
   })
 
+  // 설계 페이지 진입 시 잠금, 이탈 시 해제
+  useEffect(() => {
+    if (!screenId) return
+    api.post(`/schema/admin/screens/${screenId}/lock`).catch(() => {/* 신규 화면이면 무시 */})
+
+    const unlockBeacon = () => {
+      // beforeunload(탭 닫기·새로고침)에서는 keepalive fetch 사용
+      const token = localStorage.getItem('accessToken')
+      fetch(`/api/schema/admin/screens/${screenId}/unlock`, {
+        method: 'POST', keepalive: true,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      }).catch(() => {})
+    }
+
+    const unlockSpa = () => {
+      // SPA 라우팅(컴포넌트 언마운트)에서는 axios 사용
+      api.post(`/schema/admin/screens/${screenId}/unlock`).catch(() => {})
+    }
+
+    window.addEventListener('beforeunload', unlockBeacon)
+    return () => {
+      unlockSpa()
+      window.removeEventListener('beforeunload', unlockBeacon)
+    }
+  }, [screenId])
+
   // canvas 타입이면 캔버스 디자이너로 이동
   useEffect(() => {
     if (screen?.screenType === 'canvas' && screenId) {
@@ -625,17 +932,66 @@ const ScreenDesignPage: React.FC = () => {
       const cfg = safeParseJson(screen.layoutConfig)
       setScreenEvents((cfg.eventBindings as EventBinding[]) ?? [])
     }
-  }, [screen])
+    // screenForm을 화면 데이터로 미리 채워야 watchedTableNm 등이 정상 동작함
+    if (screen) {
+      const cfg = safeParseJson(screen.layoutConfig)
+      const gs = (cfg.gridSettings as { showSearch?: boolean; searchFields?: string[]; showExcelDownload?: boolean } | undefined) ?? {}
+      screenForm.setFieldsValue({
+        datasourceType: screen.datasourceType ?? 'biz_data',
+        tableNm:        screen.tableNm ?? '',
+        pkColumn:       screen.pkColumn ?? 'id',
+        dbConnId:       screen.dbConnId ?? undefined,
+        useAgGrid:      !!cfg.useAgGrid,
+        gridShowSearch: gs.showSearch !== false,
+        gridSearchFields: gs.searchFields ?? [],
+        gridStyles:     cfg.gridStyles ?? {},
+      })
+    }
+  }, [screen, screenForm])
 
   const { data: codeGroups } = useQuery({
     queryKey: ['codeGroups'],
     queryFn: () => api.get('/admin/codes/groups').then(r => r.data.data ?? []),
   })
 
+  const watchedDatasourceType = Form.useWatch('datasourceType', screenForm)
+  const watchedTableNm        = Form.useWatch('tableNm', screenForm)
+  const watchedDbConnId       = Form.useWatch('dbConnId', screenForm)
+  const watchedScreenType     = Form.useWatch('screenType', screenForm)
+  const watchedUseAgGrid      = Form.useWatch('useAgGrid', screenForm)
+
+  const { data: dbConnections } = useQuery({
+    queryKey: ['dbConnections'],
+    queryFn: () => api.get('/datasource/connections').then(r => r.data.data ?? []),
+  })
+
+  const { data: dbTables = [] } = useQuery<string[]>({
+    queryKey: ['dbTables', watchedDbConnId],
+    queryFn: () => api.get('/schema/admin/db-meta/tables', {
+      params: watchedDbConnId ? { dbConnId: watchedDbConnId } : {},
+    }).then(r => r.data.data ?? []),
+    enabled: watchedDatasourceType === 'table',
+  })
+
+  const { data: dbColumns = [] } = useQuery<{ column_name: string; data_type: string }[]>({
+    queryKey: ['dbColumns', watchedTableNm, watchedDbConnId],
+    queryFn: () => api.get(`/schema/admin/db-meta/tables/${watchedTableNm}/columns`, {
+      params: watchedDbConnId ? { dbConnId: watchedDbConnId } : {},
+    }).then(r => (r.data.data ?? []).map((c: Record<string, string>) => ({
+      column_name: c.column_name ?? c.COLUMN_NAME,
+      data_type: c.data_type ?? c.DATA_TYPE,
+    }))),
+    enabled: watchedDatasourceType === 'table' && !!watchedTableNm,
+  })
+
   // ─── Mutations ───────────────────────────────────────────
   const saveScreenMutation = useMutation({
     mutationFn: (v: Record<string, unknown>) => {
-      const { formCols, useAgGrid, sectionsJson, openType, btnAlign, btnSubmitLabel, btnResetLabel, btnShowReset, ...rest } = v
+      const { formCols, useAgGrid, sectionsJson, openType, btnAlign, btnSubmitLabel, btnResetLabel, btnShowReset,
+              datasourceType, tableNm, pkColumn, dbConnId,
+              gridShowSearch, gridSearchFields, gridShowExcelDownload,
+              gridStyles,
+              ...rest } = v
       let sections: unknown = undefined
       if (sectionsJson) {
         try { sections = JSON.parse(sectionsJson as string) } catch { sections = undefined }
@@ -643,6 +999,19 @@ const ScreenDesignPage: React.FC = () => {
       const layoutConfig: Record<string, unknown> = { formCols: formCols ?? 2 }
       if (useAgGrid) layoutConfig.useAgGrid = true
       if (sections) layoutConfig.sections = sections
+      // 그리드/마스터-디테일 화면만 검색 설정 저장
+      const st = rest.screenType as string
+      if (st === 'grid' || st === 'master-detail') {
+        layoutConfig.gridSettings = {
+          showSearch: gridShowSearch !== false,
+          ...(Array.isArray(gridSearchFields) && gridSearchFields.length > 0
+            ? { searchFields: gridSearchFields } : {}),
+          showExcelDownload: !!gridShowExcelDownload,
+        }
+        if (gridStyles && typeof gridStyles === 'object') {
+          layoutConfig.gridStyles = gridStyles
+        }
+      }
       const buttonConfig = {
         align: btnAlign ?? 'center',
         buttons: [
@@ -656,6 +1025,10 @@ const ScreenDesignPage: React.FC = () => {
         buttonConfig: JSON.stringify(buttonConfig),
         projectId: currentProject?.projectId,
         openType: openType ?? 'page',
+        datasourceType: datasourceType ?? 'biz_data',
+        tableNm: tableNm ?? null,
+        pkColumn: pkColumn ?? 'id',
+        dbConnId: dbConnId ?? null,
       })
     },
     onSuccess: (res) => {
@@ -801,30 +1174,47 @@ const ScreenDesignPage: React.FC = () => {
 
   const openEditField = (field: Field) => {
     setEditingField(field)
-    fieldForm.setFieldsValue({ ...field, extraConfig: field.extraConfig ?? {} })
+    fieldForm.setFieldsValue({ ...field, columnNm: field.columnNm ?? undefined, extraConfig: field.extraConfig ?? {} })
     nameAc.fetch(field.fieldNm)
     labelAc.fetch(field.fieldLabel)
     setFieldOpen(true)
   }
 
   const openScreenModal = () => {
+    if (!screen) {
+      setSectionsOn(false)
+      setLocalSections([])
+      screenForm.resetFields()
+    }
     if (screen) {
       const cfg = safeParseJson(screen.layoutConfig)
-      const sections = cfg.sections
+      const sections = cfg.sections as SectionConfig[] | undefined
+      const parsedSections: SectionConfig[] = Array.isArray(sections) ? sections : []
       const btnCfg = safeParseJson(screen.buttonConfig)
       const buttons = (btnCfg.buttons as Array<Record<string, unknown>> | undefined) ?? []
       const submitBtn = buttons.find(b => b.action === 'submit')
       const resetBtn = buttons.find(b => b.action === 'reset')
+      const gs = (cfg.gridSettings as { showSearch?: boolean; searchFields?: string[]; showExcelDownload?: boolean } | undefined) ?? {}
+      setSectionsOn(parsedSections.length > 0)
+      setLocalSections(parsedSections)
       screenForm.setFieldsValue({
         ...screen,
         formCols: (cfg.formCols as number) ?? 2,
         useAgGrid: !!cfg.useAgGrid,
-        sectionsJson: sections ? JSON.stringify(sections, null, 2) : '',
+        sectionsJson: parsedSections.length > 0 ? JSON.stringify(parsedSections) : '',
         openType: screen.openType ?? 'page',
         btnAlign: (btnCfg.align as string) ?? 'center',
         btnSubmitLabel: (submitBtn?.label as string) ?? '',
         btnResetLabel: (resetBtn?.label as string) ?? '',
         btnShowReset: (resetBtn?.visible as boolean) !== false,
+        datasourceType: screen.datasourceType ?? 'biz_data',
+        tableNm: screen.tableNm ?? '',
+        pkColumn: screen.pkColumn ?? 'id',
+        dbConnId: screen.dbConnId ?? undefined,
+        gridShowSearch: gs.showSearch !== false,
+        gridSearchFields: gs.searchFields ?? [],
+        gridShowExcelDownload: !!gs.showExcelDownload,
+        gridStyles: cfg.gridStyles ?? {},
       })
     }
     setScreenOpen(true)
@@ -952,10 +1342,11 @@ const ScreenDesignPage: React.FC = () => {
 
       {/* ─ 상단 툴바 ─ */}
       <div style={{
-        padding: '12px 24px', borderBottom: '1px solid #f0f0f0',
+        padding: '8px 16px', borderBottom: '1px solid #f0f0f0',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff',
+        flexWrap: 'wrap', gap: 8, minHeight: 56,
       }}>
-        <Space>
+        <Space wrap>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/admin/screens')}>목록</Button>
           {screen && (
             <>
@@ -967,55 +1358,107 @@ const ScreenDesignPage: React.FC = () => {
             </>
           )}
         </Space>
-        <Space>
-          {screenId && (
-            <Button icon={<EyeOutlined />} onClick={() => setPreviewMode(p => !p)} type={previewMode ? 'primary' : 'default'}>
-              {previewMode ? '편집 모드' : '미리보기'}
-            </Button>
-          )}
-          {screenId && (
-            <Button
-              icon={<DatabaseOutlined />}
-              onClick={() => setDsDrawerOpen(true)}
-            >
-              데이터 소스
-            </Button>
-          )}
-          {screenId && (
-            <Button
-              icon={<ThunderboltOutlined />}
-              onClick={() => setEventDrawerOpen(true)}
-            >
-              화면 이벤트
-              {screenEvents.length > 0 && (
-                <Badge count={screenEvents.length} style={{ marginLeft: 4, backgroundColor: '#fa8c16' }} />
-              )}
-            </Button>
-          )}
-          {isSysAdmin && screenId && (
-            <Popconfirm
-              title="화면 삭제"
-              description={`'${screen?.screenNm ?? screenId}'을(를) 삭제하시겠습니까? 모든 필드 정보도 함께 삭제됩니다.`}
-              onConfirm={async () => {
-                try {
-                  await api.delete(`/schema/admin/screens/${screenId}`)
-                  message.success('화면이 삭제되었습니다.')
-                  queryClient.invalidateQueries({ queryKey: ['adminScreens'] })
-                  navigate('/admin/screens')
-                } catch (err: unknown) {
-                  const e = err as { response?: { data?: { message?: string } } }
-                  message.error(e.response?.data?.message ?? '삭제 중 오류가 발생했습니다.')
-                }
-              }}
-              okText="삭제"
-              cancelText="취소"
-              okButtonProps={{ danger: true }}
-            >
-              <Button danger icon={<DeleteOutlined />}>화면 삭제</Button>
-            </Popconfirm>
-          )}
-          <Button icon={<EditOutlined />} onClick={openScreenModal}>화면 정보 편집</Button>
-        </Space>
+        {isMobile ? (
+          /* ── 모바일: 핵심 버튼 + ... 드롭다운 ── */
+          <Space size={4}>
+            {screenId && (
+              <Button
+                size="small"
+                icon={<EyeOutlined />}
+                onClick={() => setPreviewMode(p => !p)}
+                type={previewMode ? 'primary' : 'default'}
+              />
+            )}
+            <Button size="small" icon={<EditOutlined />} onClick={openScreenModal} />
+            {screenId && (
+              <Dropdown
+                placement="bottomRight"
+                trigger={['click']}
+                menu={{
+                  items: [
+                    {
+                      key: 'ds',
+                      icon: <DatabaseOutlined />,
+                      label: '데이터 소스',
+                      onClick: () => setDsDrawerOpen(true),
+                    },
+                    {
+                      key: 'ev',
+                      icon: <ThunderboltOutlined />,
+                      label: `화면 이벤트${screenEvents.length > 0 ? ` (${screenEvents.length})` : ''}`,
+                      onClick: () => setEventDrawerOpen(true),
+                    },
+                    ...(isSysAdmin ? [{
+                      key: 'del',
+                      icon: <DeleteOutlined />,
+                      label: '화면 삭제',
+                      danger: true,
+                      onClick: async () => {
+                        if (!window.confirm(`'${screen?.screenNm ?? screenId}'을(를) 삭제하시겠습니까?`)) return
+                        try {
+                          await api.delete(`/schema/admin/screens/${screenId}`)
+                          message.success('화면이 삭제되었습니다.')
+                          queryClient.invalidateQueries({ queryKey: ['adminScreens'] })
+                          navigate('/admin/screens')
+                        } catch (err: unknown) {
+                          const e = err as { response?: { data?: { message?: string } } }
+                          message.error(e.response?.data?.message ?? '삭제 중 오류가 발생했습니다.')
+                        }
+                      },
+                    }] : []),
+                  ],
+                }}
+              >
+                <Button size="small" icon={<MoreOutlined />} />
+              </Dropdown>
+            )}
+          </Space>
+        ) : (
+          /* ── 데스크탑: 전체 버튼 ── */
+          <Space wrap>
+            {screenId && (
+              <Button icon={<EyeOutlined />} onClick={() => setPreviewMode(p => !p)} type={previewMode ? 'primary' : 'default'}>
+                {previewMode ? '편집 모드' : '미리보기'}
+              </Button>
+            )}
+            {screenId && (
+              <Button icon={<DatabaseOutlined />} onClick={() => setDsDrawerOpen(true)}>
+                데이터 소스
+              </Button>
+            )}
+            {screenId && (
+              <Button icon={<ThunderboltOutlined />} onClick={() => setEventDrawerOpen(true)}>
+                화면 이벤트
+                {screenEvents.length > 0 && (
+                  <Badge count={screenEvents.length} style={{ marginLeft: 4, backgroundColor: '#fa8c16' }} />
+                )}
+              </Button>
+            )}
+            {isSysAdmin && screenId && (
+              <Popconfirm
+                title="화면 삭제"
+                description={`'${screen?.screenNm ?? screenId}'을(를) 삭제하시겠습니까? 모든 필드 정보도 함께 삭제됩니다.`}
+                onConfirm={async () => {
+                  try {
+                    await api.delete(`/schema/admin/screens/${screenId}`)
+                    message.success('화면이 삭제되었습니다.')
+                    queryClient.invalidateQueries({ queryKey: ['adminScreens'] })
+                    navigate('/admin/screens')
+                  } catch (err: unknown) {
+                    const e = err as { response?: { data?: { message?: string } } }
+                    message.error(e.response?.data?.message ?? '삭제 중 오류가 발생했습니다.')
+                  }
+                }}
+                okText="삭제"
+                cancelText="취소"
+                okButtonProps={{ danger: true }}
+              >
+                <Button danger icon={<DeleteOutlined />}>화면 삭제</Button>
+              </Popconfirm>
+            )}
+            <Button icon={<EditOutlined />} onClick={openScreenModal}>화면 정보 편집</Button>
+          </Space>
+        )}
       </div>
 
       {/* ─ 메인 영역 ─ */}
@@ -1161,113 +1604,320 @@ const ScreenDesignPage: React.FC = () => {
       </div>
 
       {/* ─ 화면 정보 모달 ─ */}
-      <Modal
-        title={screenId ? '화면 정보 편집' : '새 화면 등록'}
+      <ResizableModal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 32 }}>
+            <span>{screenId ? '화면 정보 편집' : '새 화면 등록'}</span>
+            <Button
+              size="small" type="link" icon={<ExpandAltOutlined />}
+              onClick={() => setCollapsedSections(new Set())}
+              style={{ fontSize: 12, color: '#1677ff' }}
+            >
+              모두 펼치기
+            </Button>
+          </div>
+        }
         open={screenOpen}
         onOk={() => screenForm.submit()}
         confirmLoading={saveScreenMutation.isPending}
         onCancel={() => { if (!saveScreenMutation.isPending) { screenId ? setScreenOpen(false) : navigate('/admin/screens') } }}
-        okText="저장" closable maskClosable={!!screenId} width={580}
+        okText="저장" closable maskClosable={!!screenId}
+        width={700}
       >
         <Form form={screenForm} layout="vertical" onFinish={saveScreenMutation.mutate}>
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item name="screenId" label="화면ID" rules={[{ required: true }]}>
-                <Input placeholder="예: USER_REG_FORM" disabled={!!screenId} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="screenType" label="화면유형" rules={[{ required: true }]} initialValue="form">
-                <Select options={SCREEN_TYPES} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="screenNm" label="화면명" rules={[{ required: true }]}>
-            <Input placeholder="예: 사용자 등록 폼" />
-          </Form.Item>
-          <Form.Item name="description" label="설명">
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Row gutter={12}>
-            <Col span={14}>
-              <Form.Item name="apiResource" label="API 경로">
-                <Input placeholder="예: USER_FORM" />
-              </Form.Item>
-            </Col>
-            <Col span={10}>
-              <Form.Item name="formCols" label="그리드 열 수" initialValue={2}
-                tooltip="한 행에 배치할 필드의 최대 수">
-                <Select options={FORM_COLS_OPTIONS} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item name="useAgGrid" label="AG Grid 사용" valuePropName="checked" initialValue={false}
-                tooltip="그리드 화면에서 인라인 편집 가능한 AG Grid를 사용합니다">
-                <Checkbox>AG Grid (인라인 편집 지원)</Checkbox>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="openType" label="화면 열기 방식" initialValue="page"
-                tooltip="메뉴에서 이 화면을 열 때의 방식">
-                <Select options={OPEN_TYPES} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item
-            name="sectionsJson"
-            label="섹션 레이아웃 (JSON)"
-            tooltip='화면 유형이 "복합 레이아웃"일 때 섹션을 정의합니다'
-          >
-            <Input.TextArea
-              rows={6}
-              placeholder={`예시:\n[\n  {"id":"s1","type":"form","title":"기본 정보"},\n  {"id":"s2","type":"grid","title":"목록"},\n  {"id":"s3","type":"editor","title":"상세 내용"}\n]`}
-              style={{ fontFamily: 'monospace', fontSize: 12 }}
-            />
-          </Form.Item>
 
-          <Divider style={{ margin: '8px 0 12px' }}>버튼 설정</Divider>
-          <Row gutter={12}>
-            <Col span={10}>
-              <Form.Item name="btnAlign" label="버튼 위치" initialValue="center">
-                <Select
-                  options={[
-                    { value: 'left', label: '좌측' },
-                    { value: 'center', label: '가운데' },
-                    { value: 'right', label: '우측' },
-                  ]}
-                />
+          {/* ── 섹션 1: 기본 정보 ── */}
+          <SectionHeader title="기본 정보" collapsed={collapsedSections.has('basic')} onToggle={() => toggleSection('basic')} />
+          <div style={{ padding: '8px 2px 4px', display: collapsedSections.has('basic') ? 'none' : '' }}>
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item name="screenId" label="화면ID" rules={[{ required: true }]}>
+                    <Input placeholder="예: USER_REG_FORM" disabled={!!screenId} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="screenType" label="화면유형" rules={[{ required: true }]} initialValue="form">
+                    <Select options={SCREEN_TYPES} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Form.Item name="screenNm" label="화면명" rules={[{ required: true }]}>
+                <Input placeholder="예: 사용자 등록 폼" />
               </Form.Item>
-            </Col>
-            <Col span={14}>
-              <Form.Item name="btnSubmitLabel" label="저장 버튼 텍스트" tooltip="비워두면 '저장' 또는 '수정' 기본값 사용">
-                <Input placeholder="저장" />
+              <Form.Item name="description" label="설명">
+                <Input.TextArea rows={2} />
               </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={10}>
-              <Form.Item name="btnShowReset" label="초기화 버튼" valuePropName="checked" initialValue={true}>
-                <Checkbox>표시</Checkbox>
+              <Row gutter={12}>
+                <Col span={14}>
+                  <Form.Item name="apiResource" label="API 경로">
+                    <Input placeholder="예: USER_FORM" />
+                  </Form.Item>
+                </Col>
+                <Col span={10}>
+                  <Form.Item name="formCols" label="그리드 열 수" initialValue={2}
+                    tooltip="한 행에 배치할 필드의 최대 수">
+                    <Select options={FORM_COLS_OPTIONS} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item name="useAgGrid" label="AG Grid 사용" valuePropName="checked" initialValue={false}
+                    tooltip="그리드 화면에서 인라인 편집 가능한 AG Grid를 사용합니다">
+                    <Checkbox>AG Grid (인라인 편집 지원)</Checkbox>
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="openType" label="화면 열기 방식" initialValue="page"
+                    tooltip="메뉴에서 이 화면을 열 때의 방식">
+                    <Select options={OPEN_TYPES} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              {/* 섹션 레이아웃 — 숨김 폼 필드 (SectionEditorUI가 값을 갱신) */}
+              <Form.Item name="sectionsJson" hidden><Input /></Form.Item>
+
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>섹션 레이아웃</span>
+                  <Switch
+                    size="small"
+                    checked={sectionsOn}
+                    checkedChildren="ON"
+                    unCheckedChildren="OFF"
+                    onChange={v => {
+                      setSectionsOn(v)
+                      if (v && localSections.length === 0) {
+                        const id1 = `s${Date.now()}`
+                        const id2 = `s${Date.now() + 1}`
+                        const defaults: SectionConfig[] = [
+                          { id: id1, type: 'grid', role: 'master', title: '목록', height: 280 },
+                          { id: id2, type: 'form', role: 'detail', title: '상세 정보', masterSectionId: id1 },
+                        ]
+                        setLocalSections(defaults)
+                      } else if (!v) {
+                        setLocalSections([])
+                        screenForm.setFieldValue('sectionsJson', '')
+                      }
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: '#888' }}>
+                    복합 레이아웃(마스터-디테일 등) 사용 시 ON
+                  </span>
+                </div>
+                {sectionsOn && (
+                  <SectionEditorUI
+                    sections={localSections}
+                    onChange={setLocalSections}
+                    fields={localFields}
+                  />
+                )}
+              </div>
+            </div>
+
+          {/* ── 섹션 2: 데이터 소스 설정 ── */}
+          <SectionHeader title="데이터 소스 설정" collapsed={collapsedSections.has('datasource')} onToggle={() => toggleSection('datasource')} />
+          <div style={{ padding: '8px 2px 4px', display: collapsedSections.has('datasource') ? 'none' : '' }}>
+              <Form.Item name="datasourceType" label="데이터 저장 방식" initialValue="biz_data"
+                tooltip="biz_data: 내장 JSON 저장소(빠른 개발) / table: 실제 DB 테이블 직접 연동">
+                <Select options={[
+                  { value: 'biz_data', label: 'biz_data — 내장 JSON 저장소 (기본)' },
+                  { value: 'table',    label: 'table — 실제 DB 테이블 매핑' },
+                ]} />
               </Form.Item>
-            </Col>
-            <Col span={14}>
-              <Form.Item name="btnResetLabel" label="초기화 버튼 텍스트" tooltip="비워두면 '초기화' 기본값 사용">
-                <Input placeholder="초기화" />
-              </Form.Item>
-            </Col>
-          </Row>
+              {watchedDatasourceType === 'table' && (
+                <>
+                  <Row gutter={12}>
+                    <Col span={12}>
+                      <Form.Item name="dbConnId" label="DB 연결" tooltip="비워두면 기본 데이터소스(H2/운영 DB) 사용">
+                        <Select allowClear placeholder="기본 DB 사용"
+                          options={(dbConnections ?? []).map((c: { connId: string; connName: string }) => ({
+                            value: c.connId, label: `${c.connName} (${c.connId})`,
+                          }))}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="pkColumn" label="PK 컬럼명" initialValue="id"
+                        rules={[{ required: watchedDatasourceType === 'table', message: 'PK 컬럼명을 입력하세요' }]}>
+                        <Select showSearch allowClear placeholder="id"
+                          options={dbColumns.map(c => ({ value: c.column_name, label: `${c.column_name} (${c.data_type})` }))}
+                          notFoundContent={watchedTableNm ? '테이블을 먼저 선택하세요' : '컬럼 없음'}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Form.Item name="tableNm" label="테이블명"
+                    rules={[{ required: watchedDatasourceType === 'table', message: '테이블명을 입력하세요' }]}>
+                    <Select showSearch allowClear placeholder="테이블 선택 또는 직접 입력"
+                      options={dbTables.map(t => ({ value: t, label: t }))}
+                      notFoundContent="테이블을 찾을 수 없습니다"
+                      onChange={() => screenForm.setFieldValue('pkColumn', 'id')}
+                    />
+                  </Form.Item>
+                  {dbColumns.length > 0 && (
+                    <Alert
+                      message={`테이블 컬럼 ${dbColumns.length}개 감지됨`}
+                      description={`컬럼: ${dbColumns.slice(0, 8).map(c => c.column_name).join(', ')}${dbColumns.length > 8 ? ' ...' : ''}`}
+                      type="success" showIcon style={{ marginBottom: 12, fontSize: 12 }}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+
+          {/* ── 섹션 3: 그리드 기능 설정 (grid / master-detail) ── */}
+          {(watchedScreenType === 'grid' || watchedScreenType === 'master-detail') && (
+            <>
+              <SectionHeader title="그리드 검색 / 기능 설정" collapsed={collapsedSections.has('gridFeature')} onToggle={() => toggleSection('gridFeature')} />
+              <div style={{ padding: '8px 2px 4px', display: collapsedSections.has('gridFeature') ? 'none' : '' }}>
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item name="gridShowSearch" label="검색바 표시" valuePropName="checked" initialValue={true}
+                      tooltip="켜면 검색 입력창이 그리드 위에 표시됩니다">
+                      <Switch checkedChildren="켜짐" unCheckedChildren="꺼짐" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="gridShowExcelDownload" label="엑셀 다운로드 버튼" valuePropName="checked" initialValue={false}
+                      tooltip="켜면 현재 조회 데이터를 엑셀로 다운로드하는 버튼이 표시됩니다">
+                      <Switch checkedChildren="켜짐" unCheckedChildren="꺼짐" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Form.Item name="gridSearchFields" label="검색 대상 필드"
+                  tooltip="선택하지 않으면 text/select 타입 필드 앞 3개가 자동으로 사용됩니다">
+                  <Select mode="multiple" allowClear placeholder="검색할 필드 선택 (미선택 = 자동)"
+                    options={localFields.filter(f => f.hiddenYn !== 'Y').map(f => ({
+                      value: f.fieldNm, label: `${f.fieldLabel} (${f.fieldNm})`,
+                    }))}
+                  />
+                </Form.Item>
+              </div>
+            </>
+          )}
+
+          {/* ── 섹션 4: 그리드 스타일 설정 (AG Grid 화면) ── */}
+          {(watchedScreenType === 'grid' || watchedScreenType === 'master-detail') && watchedUseAgGrid && (
+            <>
+              <SectionHeader title="그리드 스타일 설정" collapsed={collapsedSections.has('gridStyle')} onToggle={() => toggleSection('gridStyle')} />
+              <div style={{ padding: '8px 2px 4px', display: collapsedSections.has('gridStyle') ? 'none' : '' }}>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: '#666', marginBottom: 8 }}>헤더</div>
+                  <Row gutter={12}>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'header', 'backgroundColor']} label="배경색">
+                        <Input type="color" style={{ height: 32, padding: '2px 4px', width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'header', 'color']} label="폰트 색">
+                        <Input type="color" style={{ height: 32, padding: '2px 4px', width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'header', 'fontSize']} label="폰트 크기 (px)">
+                        <InputNumber min={10} max={24} style={{ width: '100%' }} placeholder="13" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'header', 'fontWeight']} label="폰트 굵기">
+                        <Select allowClear placeholder="보통" options={[
+                          { value: 'normal', label: '보통' },
+                          { value: '600',    label: '세미볼드' },
+                          { value: 'bold',   label: '볼드' },
+                        ]} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={12}>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'header', 'height']} label="헤더 높이 (px)">
+                        <InputNumber min={24} max={80} style={{ width: '100%' }} placeholder="40" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: '#666', marginBottom: 8, marginTop: 4 }}>행 (Row)</div>
+                  <Row gutter={12}>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'row', 'fontSize']} label="폰트 크기 (px)">
+                        <InputNumber min={10} max={24} style={{ width: '100%' }} placeholder="13" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'row', 'height']} label="행 높이 (px)">
+                        <InputNumber min={24} max={100} style={{ width: '100%' }} placeholder="40" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: '#666', marginBottom: 8, marginTop: 4 }}>하단 상태바 (페이지네이션)</div>
+                  <Row gutter={12}>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'statusBar', 'height']} label="높이 (px)">
+                        <InputNumber min={24} max={80} style={{ width: '100%' }} placeholder="32" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['gridStyles', 'statusBar', 'fontSize']} label="폰트 크기 (px)">
+                        <InputNumber min={10} max={20} style={{ width: '100%' }} placeholder="12" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name={['gridStyles', 'statusBar', 'justifyContent']} label="정렬 위치">
+                        <Select allowClear placeholder="우측 (기본)" options={[
+                          { value: 'flex-start', label: '좌측' },
+                          { value: 'center',     label: '가운데' },
+                          { value: 'flex-end',   label: '우측' },
+                        ]} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+              </div>
+            </>
+          )}
+
+          {/* ── 섹션 5: 버튼 설정 ── */}
+          <SectionHeader title="버튼 설정" collapsed={collapsedSections.has('button')} onToggle={() => toggleSection('button')} />
+          <div style={{ padding: '8px 2px 4px', display: collapsedSections.has('button') ? 'none' : '' }}>
+              <Row gutter={12}>
+                <Col span={10}>
+                  <Form.Item name="btnAlign" label="버튼 위치" initialValue="center">
+                    <Select options={[
+                      { value: 'left',   label: '좌측' },
+                      { value: 'center', label: '가운데' },
+                      { value: 'right',  label: '우측' },
+                    ]} />
+                  </Form.Item>
+                </Col>
+                <Col span={14}>
+                  <Form.Item name="btnSubmitLabel" label="저장 버튼 텍스트" tooltip="비워두면 '저장' 또는 '수정' 기본값 사용">
+                    <Input placeholder="저장" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={12}>
+                <Col span={10}>
+                  <Form.Item name="btnShowReset" label="초기화 버튼" valuePropName="checked" initialValue={true}>
+                    <Checkbox>표시</Checkbox>
+                  </Form.Item>
+                </Col>
+                <Col span={14}>
+                  <Form.Item name="btnResetLabel" label="초기화 버튼 텍스트" tooltip="비워두면 '초기화' 기본값 사용">
+                    <Input placeholder="초기화" />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </div>
+
         </Form>
-      </Modal>
+      </ResizableModal>
 
       {/* ─ 필드 편집 모달 ─ */}
-      <Modal
+      <ResizableModal
         title={editingField ? `필드 편집 — ${editingField.fieldLabel}` : '필드 추가'}
         open={fieldOpen}
         onOk={() => fieldForm.submit()}
         onCancel={() => { setFieldOpen(false); setEditingField(null); fieldForm.resetFields() }}
-        okText="저장" width={660} destroyOnHidden
+        okText="저장" width={780} destroyOnHidden
       >
         <Form
           form={fieldForm}
@@ -1283,7 +1933,7 @@ const ScreenDesignPage: React.FC = () => {
                 ...(gridConfig != null ? { gridConfig } : {}),
               },
             }
-            saveFieldMutation.mutate({ ...merged, fieldId: editingField?.fieldId })
+            saveFieldMutation.mutate({ ...merged, fieldId: editingField?.fieldId, columnNm: v.columnNm ?? null })
           }}
         >
           <Tabs
@@ -1295,7 +1945,7 @@ const ScreenDesignPage: React.FC = () => {
                 children: (
                   <>
                     <Row gutter={12}>
-                      <Col span={12}>
+                      <Col span={11}>
                         <Form.Item
                           name="fieldNm"
                           label={<Space size={4}>필드명 (영문)<Tooltip title="소문자+언더스코어만 허용"><InfoCircleOutlined style={{ color: '#1677ff', fontSize: 12 }} /></Tooltip></Space>}
@@ -1307,13 +1957,23 @@ const ScreenDesignPage: React.FC = () => {
                           <SnakeCaseInput options={nameAc.options} onFetch={nameAc.fetch} />
                         </Form.Item>
                       </Col>
-                      <Col span={12}>
+                      <Col span={10}>
                         <Form.Item name="fieldLabel" label="레이블 (한글)" rules={[{ required: true }]}>
                           <AutoComplete
                             options={labelAc.options} filterOption={false} placeholder="예: 사용자명"
                             onSearch={labelAc.fetch} onFocus={() => labelAc.fetch(fieldForm.getFieldValue('fieldLabel') ?? '')}
                             style={{ width: '100%' }}
                           />
+                        </Form.Item>
+                      </Col>
+                      <Col span={3}>
+                        <Form.Item
+                          name={['extraConfig', 'showLabel']}
+                          label="레이블 표시"
+                          initialValue={true}
+                          valuePropName="checked"
+                        >
+                          <Switch size="small" checkedChildren="표시" unCheckedChildren="숨김" />
                         </Form.Item>
                       </Col>
                     </Row>
@@ -1369,6 +2029,49 @@ const ScreenDesignPage: React.FC = () => {
                       </Col>
                     </Row>
 
+                    {watchedFieldType === 'text' && (
+                      <Form.Item
+                        name={['extraConfig', 'align']}
+                        label="정렬"
+                        initialValue="left"
+                      >
+                        <Radio.Group size="small" buttonStyle="solid">
+                          <Radio.Button value="left"><AlignLeftOutlined /> 좌측</Radio.Button>
+                          <Radio.Button value="center"><AlignCenterOutlined /> 중앙</Radio.Button>
+                          <Radio.Button value="right"><AlignRightOutlined /> 우측</Radio.Button>
+                        </Radio.Group>
+                      </Form.Item>
+                    )}
+                    {watchedFieldType === 'number' && (
+                      <Form.Item label="정렬">
+                        <Radio.Group size="small" buttonStyle="solid" value="right" disabled>
+                          <Radio.Button value="right"><AlignRightOutlined /> 우측 (고정)</Radio.Button>
+                        </Radio.Group>
+                      </Form.Item>
+                    )}
+
+                    {screen?.datasourceType === 'table' && (
+                      <Form.Item name="columnNm" label="DB 컬럼명"
+                        tooltip="실제 테이블 컬럼명. 비워두면 필드명을 컬럼명으로 사용합니다.">
+                        <Select
+                          showSearch allowClear placeholder={`기본값: 필드명 사용`}
+                          options={dbColumns.map(c => ({
+                            value: c.column_name,
+                            label: `${c.column_name} (${c.data_type})`,
+                          }))}
+                          notFoundContent={dbColumns.length === 0 ? '화면 정보에서 테이블을 먼저 선택하세요' : '없음'}
+                        />
+                      </Form.Item>
+                    )}
+
+                    <Form.Item
+                      name={['extraConfig', 'jsonPath']}
+                      label="JSON 경로"
+                      tooltip="컬럼 값이 JSON 배열/객체일 때 추출할 경로. 예) [0].email  /  [0].phone  /  name"
+                    >
+                      <Input placeholder="예: [0].email" allowClear />
+                    </Form.Item>
+
                     <Row gutter={12}>
                       <Col span={12}>
                         <Form.Item name="codeGroup" label="공통코드 그룹">
@@ -1380,12 +2083,17 @@ const ScreenDesignPage: React.FC = () => {
                           />
                         </Form.Item>
                       </Col>
-                      <Col span={6}>
+                      <Col span={4}>
+                        <Form.Item name="useYn" label="사용여부" initialValue="Y">
+                          <Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={4}>
                         <Form.Item name="readonlyYn" label="읽기전용" initialValue="N">
                           <Select options={[{ value: 'N', label: '아니오' }, { value: 'Y', label: '예' }]} />
                         </Form.Item>
                       </Col>
-                      <Col span={6}>
+                      <Col span={4}>
                         <Form.Item name="hiddenYn" label="숨김" initialValue="N">
                           <Select options={[{ value: 'N', label: '아니오' }, { value: 'Y', label: '예' }]} />
                         </Form.Item>
@@ -1507,7 +2215,7 @@ const ScreenDesignPage: React.FC = () => {
             ]}
           />
         </Form>
-      </Modal>
+      </ResizableModal>
 
       {/* ─ 필드 복사 모달 ─ */}
       {screenId && (

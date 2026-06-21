@@ -3,6 +3,7 @@ import {
   Button, Input, InputNumber, Select, Switch, Space, Typography,
   Card, Divider, Form, Modal, Tag, Tooltip, Row, Col
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import {
   PlusOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined,
   EyeOutlined, SaveOutlined
@@ -268,19 +269,19 @@ export const ReportDesigner: React.FC<Props> = ({ config, onSave, saving }) => {
       </Card>
 
       {/* 미리보기 모달 */}
-      <Modal
+      <ResizableModal
         title="리포트 미리보기"
         open={previewOpen}
         onCancel={() => setPreviewOpen(false)}
         footer={null}
-        width="90vw"
+        width={900}
         style={{ top: 20 }}
         destroyOnHidden
       >
         <div style={{ maxHeight: '80vh', overflowY: 'auto' }}>
           <ReportRenderer layoutConfig={previewConfig as unknown as Record<string, unknown>} />
         </div>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

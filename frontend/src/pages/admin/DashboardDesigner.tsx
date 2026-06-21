@@ -3,6 +3,7 @@ import {
   Button, Modal, Form, Input, Select, InputNumber, Row, Col,
   Card, Space, Tooltip, Popconfirm, Badge, Typography, Alert, Divider, Tag, message,
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
   BarChartOutlined, LineChartOutlined, PieChartOutlined, AreaChartOutlined,
@@ -241,7 +242,7 @@ const WidgetModal: React.FC<{
   }
 
   return (
-    <Modal
+    <ResizableModal
       title={editing ? '위젯 편집' : '위젯 추가'}
       open={open}
       onOk={handleOk}
@@ -299,7 +300,7 @@ const WidgetModal: React.FC<{
 
         {watchedType && <WidgetConfigFields widgetType={watchedType} />}
       </Form>
-    </Modal>
+    </ResizableModal>
   )
 }
 

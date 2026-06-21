@@ -3,6 +3,7 @@ import {
   Table, Button, Modal, Form, Input, Select, Space, Tag, message,
   Typography, Avatar, Upload
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import {
   PlusOutlined, EditOutlined, UserOutlined, CameraOutlined, LoadingOutlined
 } from '@ant-design/icons'
@@ -108,7 +109,7 @@ const UserManagementPage: React.FC = () => {
 
       <Table dataSource={data ?? []} columns={columns} rowKey="userId" loading={isLoading} size="middle" />
 
-      <Modal
+      <ResizableModal
         title={editingUserId ? `사용자 수정 — ${editingUserId}` : '사용자 등록'}
         open={open}
         onOk={() => form.submit()}
@@ -156,7 +157,7 @@ const UserManagementPage: React.FC = () => {
             <Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

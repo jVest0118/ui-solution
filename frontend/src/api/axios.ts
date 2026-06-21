@@ -26,9 +26,11 @@ const drainQueue = (err: unknown, token: string | null) => {
 // 세션 만료 처리: auth 상태 초기화 후 로그인 페이지로 이동
 const handleSessionExpired = () => {
   if (isRedirectingToLogin) return
+  // 이미 로그아웃된 상태(intentional logout)이면 expired 메시지 없이 이동
+  const wasAuthenticated = useAuthStore.getState().isAuthenticated
   isRedirectingToLogin = true
   useAuthStore.getState().logout()
-  window.location.href = '/login?expired=1'
+  window.location.href = wasAuthenticated ? '/login?expired=1' : '/login'
 }
 
 api.interceptors.response.use(
@@ -36,7 +38,8 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && !originalRequest._retry &&
+        !originalRequest.url?.includes('/auth/login')) {
       const refreshToken = localStorage.getItem('refreshToken')
 
       if (!refreshToken) {

@@ -3,6 +3,7 @@ import {
   Button, Modal, Form, Input, Select, Space, Tag, Divider,
   Row, Col, Popconfirm, Alert, Typography,
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ThunderboltOutlined,
   HolderOutlined,
@@ -323,7 +324,7 @@ export const EventActionEditor: React.FC<{
         이벤트 바인딩 추가
       </Button>
 
-      <Modal
+      <ResizableModal
         title={
           <Space>
             <ThunderboltOutlined style={{ color: '#fa8c16' }} />
@@ -384,7 +385,7 @@ export const EventActionEditor: React.FC<{
             )}
           </Form.List>
         </Form>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

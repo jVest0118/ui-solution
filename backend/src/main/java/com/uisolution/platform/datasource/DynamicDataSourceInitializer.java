@@ -10,6 +10,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
+import javax.sql.DataSource;
 import java.util.List;
 
 @Slf4j
@@ -19,6 +20,7 @@ public class DynamicDataSourceInitializer implements ApplicationRunner {
 
     private final DbConnectionRepository repository;
     private final DataSourceRegistry     registry;
+    private final DataSource             primaryDataSource;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -26,8 +28,7 @@ public class DynamicDataSourceInitializer implements ApplicationRunner {
         int success = 0, fail = 0;
 
         for (DbConnection conn : all) {
-            if ("SYSTEM_DB".equals(conn.getConnId())) continue;     // 시스템 DB는 Spring이 직접 관리
-            if (!"Y".equals(conn.getIsActive()))       continue;     // 비활성 연결 스킵
+            if (!"Y".equals(conn.getIsActive())) continue;          // 비활성 연결 스킵
 
             try {
                 HikariConfig cfg = buildConfig(conn);

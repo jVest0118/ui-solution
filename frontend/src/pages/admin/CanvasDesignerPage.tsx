@@ -9,12 +9,13 @@ import {
   MinusOutlined, FormOutlined, SplitCellsOutlined, CheckSquareOutlined,
   AlignLeftOutlined, AlignCenterOutlined, AlignRightOutlined, EyeOutlined,
   HomeOutlined, PhoneOutlined, CalendarOutlined, UserOutlined,
+  TableOutlined, DownSquareOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/api/axios'
 import { ScreenRenderer } from '@/components/renderer/ScreenRenderer'
-import type { CanvasElement, CanvasElementType, SplitPart, CanvasConfig } from '@/types/schema'
+import type { CanvasElement, CanvasElementType, SplitPart, CanvasConfig, GridColumn, ToolbarButton } from '@/types/schema'
 
 const { Text, Title } = Typography
 
@@ -28,9 +29,11 @@ const PALETTE: { type: CanvasElementType; label: string; icon: React.ReactNode; 
   { type: 'address-input', label: '주소 입력', icon: <HomeOutlined />,         defaultW: 360, defaultH: 110 },
   { type: 'phone-input',   label: '핸드폰 번호', icon: <PhoneOutlined />,      defaultW: 340, defaultH: 70 },
   { type: 'date-input',    label: '날짜 입력', icon: <CalendarOutlined />,     defaultW: 240, defaultH: 70 },
+  { type: 'select-input',  label: '드롭다운',  icon: <DownSquareOutlined />,    defaultW: 280, defaultH: 70 },
   { type: 'button',        label: '버튼',     icon: <FormOutlined />,          defaultW: 140, defaultH: 44 },
   { type: 'divider',       label: '구분선',   icon: <MinusOutlined />,         defaultW: 360, defaultH: 16 },
   { type: 'user-profile',  label: '사용자 프로필', icon: <UserOutlined />,      defaultW: 260, defaultH: 200 },
+  { type: 'data-grid',     label: '데이터 그리드', icon: <TableOutlined />,     defaultW: 800, defaultH: 400 },
 ]
 
 function genId() { return 'el_' + Math.random().toString(36).slice(2, 9) }
@@ -79,13 +82,41 @@ function defaultProps(type: CanvasElementType): CanvasElement['props'] {
       return { dividerColor: '#e0e0e0', thickness: 1, dividerStyle: 'solid' }
     case 'user-profile':
       return { title: '', bgColor: '#1677ff', showLogout: true, avatarSize: 80, stats: [] }
+    case 'select-input':
+      return {
+        label: '선택',
+        fieldNm: 'select_' + Math.random().toString(36).slice(2, 5),
+        placeholder: '선택하세요',
+        options: [{ value: '1', label: '항목 1' }, { value: '2', label: '항목 2' }],
+      }
+    case 'data-grid':
+      return {
+        apiEndpoint: '',
+        columns: [
+          { field: 'col1', header: '컬럼1', width: 120 },
+          { field: 'col2', header: '컬럼2', width: 150 },
+        ] as GridColumn[],
+        toolbarButtons: [
+          { label: '등록', buttonType: 'primary', action: 'open-popup', targetScreenId: '' },
+        ] as ToolbarButton[],
+        rowClickAction: 'none',
+        rowClickTargetScreenId: '',
+        searchFields: [],
+        gridHeight: 380,
+        pageSize: 20,
+      }
     default:
       return {}
   }
 }
 
 // ─── 캔버스 위 요소 미리보기 렌더링 ──────────────────────────
-const ElementPreview: React.FC<{ el: CanvasElement; selected: boolean }> = ({ el, selected }) => {
+const ElementPreview: React.FC<{
+  el: CanvasElement
+  selected: boolean
+  selectedColIdx?: number | null
+  onColumnClick?: (idx: number) => void
+}> = ({ el, selected, selectedColIdx, onColumnClick }) => {
   const p = el.props
 
   const renderInner = () => {
@@ -272,6 +303,82 @@ const ElementPreview: React.FC<{ el: CanvasElement; selected: boolean }> = ({ el
             {(p.title as string) && <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10 }}>{p.title as string}</div>}
           </div>
         )
+
+      case 'select-input':
+        return (
+          <div style={{ width: '100%' }}>
+            {p.label && <div style={{ fontSize: 12, color: '#555', marginBottom: 4, userSelect: 'none' }}>{p.label as string}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #d0d0d0', borderRadius: 6, padding: '5px 10px', background: '#fff', gap: 8, userSelect: 'none' }}>
+              <span style={{ flex: 1, fontSize: 13, color: '#ccc' }}>{(p.placeholder as string) ?? '선택하세요'}</span>
+              <span style={{ color: '#aaa', fontSize: 10 }}>▼</span>
+            </div>
+          </div>
+        )
+
+      case 'data-grid': {
+        const cols = (p.columns as GridColumn[]) ?? []
+        const tbBtns = (p.toolbarButtons as ToolbarButton[]) ?? []
+        return (
+          <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', userSelect: 'none' }}>
+            {/* 툴바 미리보기 */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <div style={{ flex: 1 }} />
+              {tbBtns.map((btn, i) => (
+                <div key={i} style={{
+                  padding: '3px 10px', borderRadius: 4, fontSize: 11,
+                  background: btn.buttonType === 'primary' ? '#1677ff' : btn.buttonType === 'danger' ? '#ff4d4f' : '#fff',
+                  color: (btn.buttonType === 'primary' || btn.buttonType === 'danger') ? '#fff' : '#333',
+                  border: btn.buttonType === 'default' ? '1px solid #d9d9d9' : 'none',
+                }}>
+                  {btn.label}
+                </div>
+              ))}
+            </div>
+            {/* 헤더 */}
+            <div style={{ display: 'flex', background: '#fafafa', borderTop: '1px solid #e8e8e8', borderBottom: '1px solid #e8e8e8' }}>
+              {cols.map((col, i) => (
+                <div
+                  key={i}
+                  style={{
+                    flex: col.width ?? 1,
+                    padding: '5px 8px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: selectedColIdx === i ? '#1677ff' : '#555',
+                    background: selectedColIdx === i ? '#e6f4ff' : undefined,
+                    borderRight: i < cols.length - 1 ? '1px solid #e8e8e8' : undefined,
+                    borderBottom: selectedColIdx === i ? '2px solid #1677ff' : undefined,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    cursor: onColumnClick ? 'pointer' : undefined,
+                  }}
+                  onMouseDown={onColumnClick ? e => e.stopPropagation() : undefined}
+                  onClick={onColumnClick ? e => { e.stopPropagation(); onColumnClick(i) } : undefined}
+                >
+                  {col.header}
+                </div>
+              ))}
+            </div>
+            {/* 샘플 행 */}
+            {[1, 2, 3].map(r => (
+              <div key={r} style={{ display: 'flex', borderBottom: '1px solid #f0f0f0' }}>
+                {cols.map((_, i) => (
+                  <div key={i} style={{ flex: cols[i]?.width ?? 1, padding: '4px 8px', fontSize: 11, color: '#ccc', borderRight: i < cols.length - 1 ? '1px solid #f0f0f0' : undefined }}>
+                    ——
+                  </div>
+                ))}
+              </div>
+            ))}
+            {cols.length === 0 && (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ccc', fontSize: 12 }}>
+                <TableOutlined style={{ marginRight: 6 }} /> 컬럼을 추가하세요
+              </div>
+            )}
+          </div>
+        )
+      }
+
       default:
         return null
     }
@@ -321,7 +428,9 @@ const PropsPanel: React.FC<{
   onChange: (id: string, props: Partial<CanvasElement['props']>) => void
   onGeometry: (id: string, geo: Partial<Pick<CanvasElement,'x'|'y'|'w'|'h'>>) => void
   onDelete: (id: string) => void
-}> = ({ el, onChange, onGeometry, onDelete }) => {
+  selectedColIdx?: number | null
+  onColIdxChange?: (idx: number | null) => void
+}> = ({ el, onChange, onGeometry, onDelete, selectedColIdx, onColIdxChange }) => {
   const p = el.props
   const set = (key: string, val: unknown) => onChange(el.id, { [key]: val })
 
@@ -561,6 +670,32 @@ const PropsPanel: React.FC<{
         </>
       )}
 
+      {/* 드롭다운 */}
+      {el.type === 'select-input' && (
+        <>
+          <Divider orientation="left" plain style={{ fontSize: 11, margin: '6px 0' }}>드롭다운</Divider>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>레이블</div>
+              <Input size="small" value={(p.label as string) ?? ''} onChange={e => set('label', e.target.value)} /></div>
+            <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>필드명 (영문)</div>
+              <Input size="small" value={(p.fieldNm as string) ?? ''} onChange={e => set('fieldNm', e.target.value)} /></div>
+            <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>플레이스홀더</div>
+              <Input size="small" value={(p.placeholder as string) ?? ''} onChange={e => set('placeholder', e.target.value)} /></div>
+            <div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>항목</div>
+            {((p.options as {value:string;label:string}[]) ?? []).map((opt, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <Input size="small" placeholder="값" value={opt.value} style={{ flex: 1 }}
+                  onChange={e => { const opts = [...((p.options as {value:string;label:string}[]) ?? [])]; opts[idx] = { ...opts[idx], value: e.target.value }; set('options', opts) }} />
+                <Input size="small" placeholder="레이블" value={opt.label} style={{ flex: 1 }}
+                  onChange={e => { const opts = [...((p.options as {value:string;label:string}[]) ?? [])]; opts[idx] = { ...opts[idx], label: e.target.value }; set('options', opts) }} />
+                <Button size="small" danger type="text" onClick={() => { const opts = [...((p.options as {value:string;label:string}[]) ?? [])]; opts.splice(idx, 1); set('options', opts) }}>×</Button>
+              </div>
+            ))}
+            <Button size="small" icon={<PlusOutlined />} block onClick={() => { const opts = [...((p.options as {value:string;label:string}[]) ?? [])]; opts.push({ value: String(opts.length + 1), label: '항목 ' + (opts.length + 1) }); set('options', opts) }}>항목 추가</Button>
+          </div>
+        </>
+      )}
+
       {/* 버튼 */}
       {el.type === 'button' && (
         <>
@@ -573,10 +708,228 @@ const PropsPanel: React.FC<{
                 options={[{value:'primary',label:'Primary (파란색)'},{value:'default',label:'Default (흰색)'},{value:'danger',label:'Danger (빨간색)'}]} /></div>
             <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>동작</div>
               <Select size="small" style={{ width: '100%' }} value={(p.action as string) ?? 'submit'} onChange={v => set('action', v)}
-                options={[{value:'submit',label:'저장/제출'},{value:'reset',label:'초기화'},{value:'close',label:'닫기'}]} /></div>
+                options={[
+                  {value:'submit',    label:'저장/제출'},
+                  {value:'reset',     label:'초기화'},
+                  {value:'close',     label:'닫기'},
+                  {value:'open-popup',label:'팝업 열기 (다른 화면)'},
+                  {value:'navigate',  label:'페이지 이동'},
+                ]} /></div>
+            {(p.action as string) === 'open-popup' && (
+              <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>팝업 화면 ID</div>
+                <Input size="small" value={(p.targetScreenId as string) ?? ''} placeholder="예) CONTACT_FORM"
+                  onChange={e => set('targetScreenId', e.target.value)} /></div>
+            )}
+            {(p.action as string) === 'navigate' && (
+              <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>이동 경로</div>
+                <Input size="small" value={(p.navigatePath as string) ?? ''} placeholder="예) /app/my-screen"
+                  onChange={e => set('navigatePath', e.target.value)} /></div>
+            )}
           </div>
         </>
       )}
+
+      {/* 데이터 그리드 — 컬럼 단독 선택 뷰 */}
+      {el.type === 'data-grid' && selectedColIdx != null && (() => {
+        const cols = (p.columns as GridColumn[]) ?? []
+        const col = cols[selectedColIdx]
+        if (!col) return null
+        const updateCol = (patch: Partial<GridColumn>) => {
+          const next = [...cols]; next[selectedColIdx] = { ...col, ...patch }; set('columns', next)
+        }
+        return (
+          <div style={{ padding: '0 0 12px' }}>
+            {/* 브레드크럼 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10, paddingBottom: 8, borderBottom: '1px solid #f0f0f0' }}>
+              <button
+                onClick={() => onColIdxChange?.(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1677ff', fontSize: 12, padding: '2px 4px', borderRadius: 4 }}
+              >← 전체 속성</button>
+              <span style={{ color: '#bbb', fontSize: 12 }}>/</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#1677ff' }}>컬럼 {selectedColIdx + 1}</span>
+            </div>
+
+            <Divider orientation="left" plain style={{ fontSize: 11, margin: '6px 0' }}>컬럼 속성</Divider>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>헤더 텍스트</div>
+                <Input size="small" value={col.header} onChange={e => updateCol({ header: e.target.value })} />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>필드명 (영문)</div>
+                <Input size="small" value={col.field} onChange={e => updateCol({ field: e.target.value })} placeholder="예) firstName" />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>너비 (px)</div>
+                <InputNumber size="small" style={{ width: '100%' }} min={40} max={600} value={col.width ?? 120}
+                  onChange={v => updateCol({ width: v ?? 120 })} />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>정렬</div>
+                <Select size="small" style={{ width: '100%' }}
+                  value={(col as GridColumn & { align?: string }).align ?? 'left'}
+                  onChange={v => updateCol({ align: v } as Partial<GridColumn>)}
+                  options={[{ value: 'left', label: '왼쪽' }, { value: 'center', label: '가운데' }, { value: 'right', label: '오른쪽' }]}
+                />
+              </div>
+              <Divider style={{ margin: '4px 0' }} />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Button
+                  size="small" block
+                  disabled={selectedColIdx === 0}
+                  onClick={() => {
+                    const next = [...cols]
+                    ;[next[selectedColIdx - 1], next[selectedColIdx]] = [next[selectedColIdx], next[selectedColIdx - 1]]
+                    set('columns', next)
+                    onColIdxChange?.(selectedColIdx - 1)
+                  }}
+                >← 앞으로</Button>
+                <Button
+                  size="small" block
+                  disabled={selectedColIdx === cols.length - 1}
+                  onClick={() => {
+                    const next = [...cols]
+                    ;[next[selectedColIdx], next[selectedColIdx + 1]] = [next[selectedColIdx + 1], next[selectedColIdx]]
+                    set('columns', next)
+                    onColIdxChange?.(selectedColIdx + 1)
+                  }}
+                >뒤로 →</Button>
+              </div>
+              <Button
+                size="small" danger block
+                onClick={() => {
+                  const next = [...cols]; next.splice(selectedColIdx, 1); set('columns', next)
+                  onColIdxChange?.(null)
+                }}
+              >컬럼 삭제</Button>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* 데이터 그리드 — 전체 속성 */}
+      {el.type === 'data-grid' && selectedColIdx == null && (
+        <>
+          <Divider orientation="left" plain style={{ fontSize: 11, margin: '6px 0' }}>데이터 그리드</Divider>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+            {/* API 엔드포인트 */}
+            <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>API 엔드포인트</div>
+              <Input size="small" value={(p.apiEndpoint as string) ?? ''} placeholder="/biz/SCREEN_ID 또는 /contacts"
+                onChange={e => set('apiEndpoint', e.target.value)} /></div>
+
+            {/* 높이 / 페이지 크기 */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>높이 (px)</div>
+                <InputNumber size="small" style={{ width: '100%' }} min={100} max={2000} value={(p.gridHeight as number) ?? 380}
+                  onChange={v => set('gridHeight', v)} /></div>
+              <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>페이지 크기</div>
+                <InputNumber size="small" style={{ width: '100%' }} min={5} max={200} value={(p.pageSize as number) ?? 20}
+                  onChange={v => set('pageSize', v)} /></div>
+            </div>
+
+            {/* 컬럼 정의 */}
+            <Divider orientation="left" plain style={{ fontSize: 10, margin: '4px 0' }}>컬럼</Divider>
+            {((p.columns as GridColumn[]) ?? []).map((col, idx) => (
+              <div key={idx} style={{ background: '#f8f9fa', borderRadius: 6, padding: '6px 8px', marginBottom: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 10 }} strong>컬럼 {idx + 1}</Text>
+                  <Button size="small" danger type="text" onClick={() => { const cols = [...((p.columns as GridColumn[]) ?? [])]; cols.splice(idx, 1); set('columns', cols) }}>×</Button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                  <div><div style={{ fontSize: 10, color: '#888' }}>헤더</div>
+                    <Input size="small" value={col.header} onChange={e => { const cols = [...((p.columns as GridColumn[]) ?? [])]; cols[idx] = { ...cols[idx], header: e.target.value }; set('columns', cols) }} /></div>
+                  <div><div style={{ fontSize: 10, color: '#888' }}>필드명</div>
+                    <Input size="small" value={col.field} onChange={e => { const cols = [...((p.columns as GridColumn[]) ?? [])]; cols[idx] = { ...cols[idx], field: e.target.value }; set('columns', cols) }} /></div>
+                  <div><div style={{ fontSize: 10, color: '#888' }}>너비(px)</div>
+                    <InputNumber size="small" style={{ width: '100%' }} min={40} max={600} value={col.width ?? 120}
+                      onChange={v => { const cols = [...((p.columns as GridColumn[]) ?? [])]; cols[idx] = { ...cols[idx], width: v ?? 120 }; set('columns', cols) }} /></div>
+                </div>
+              </div>
+            ))}
+            <Button size="small" icon={<PlusOutlined />} block onClick={() => { const cols = [...((p.columns as GridColumn[]) ?? [])]; cols.push({ field: 'field' + cols.length, header: '컬럼' + (cols.length + 1), width: 120 }); set('columns', cols) }}>컬럼 추가</Button>
+
+            {/* 툴바 버튼 */}
+            <Divider orientation="left" plain style={{ fontSize: 10, margin: '4px 0' }}>툴바 버튼</Divider>
+            {((p.toolbarButtons as ToolbarButton[]) ?? []).map((btn, idx) => (
+              <div key={idx} style={{ background: '#f0f5ff', borderRadius: 6, padding: '6px 8px', marginBottom: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 10 }} strong>버튼 {idx + 1}</Text>
+                  <Button size="small" danger type="text" onClick={() => { const btns = [...((p.toolbarButtons as ToolbarButton[]) ?? [])]; btns.splice(idx, 1); set('toolbarButtons', btns) }}>×</Button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div><div style={{ fontSize: 10, color: '#888' }}>레이블</div>
+                    <Input size="small" value={btn.label} onChange={e => { const btns = [...((p.toolbarButtons as ToolbarButton[]) ?? [])]; btns[idx] = { ...btns[idx], label: e.target.value }; set('toolbarButtons', btns) }} /></div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                    <div><div style={{ fontSize: 10, color: '#888' }}>스타일</div>
+                      <Select size="small" style={{ width: '100%' }} value={btn.buttonType ?? 'primary'}
+                        onChange={v => { const btns = [...((p.toolbarButtons as ToolbarButton[]) ?? [])]; btns[idx] = { ...btns[idx], buttonType: v as ToolbarButton['buttonType'] }; set('toolbarButtons', btns) }}
+                        options={[{value:'primary',label:'Primary'},{value:'default',label:'Default'},{value:'danger',label:'Danger'}]} /></div>
+                    <div><div style={{ fontSize: 10, color: '#888' }}>동작</div>
+                      <Select size="small" style={{ width: '100%' }} value={btn.action ?? 'open-popup'}
+                        onChange={v => { const btns = [...((p.toolbarButtons as ToolbarButton[]) ?? [])]; btns[idx] = { ...btns[idx], action: v as ToolbarButton['action'] }; set('toolbarButtons', btns) }}
+                        options={[{value:'open-popup',label:'팝업 열기'},{value:'refresh',label:'새로고침'},{value:'custom',label:'커스텀'}]} /></div>
+                  </div>
+                  {btn.action === 'open-popup' && (
+                    <div><div style={{ fontSize: 10, color: '#888' }}>팝업 화면 ID</div>
+                      <Input size="small" value={btn.targetScreenId ?? ''} placeholder="예) CONTACT_FORM"
+                        onChange={e => { const btns = [...((p.toolbarButtons as ToolbarButton[]) ?? [])]; btns[idx] = { ...btns[idx], targetScreenId: e.target.value }; set('toolbarButtons', btns) }} /></div>
+                  )}
+                </div>
+              </div>
+            ))}
+            <Button size="small" icon={<PlusOutlined />} block onClick={() => { const btns = [...((p.toolbarButtons as ToolbarButton[]) ?? [])]; btns.push({ label: '버튼', buttonType: 'default', action: 'refresh' }); set('toolbarButtons', btns) }}>버튼 추가</Button>
+
+            {/* 행 클릭 동작 */}
+            <Divider orientation="left" plain style={{ fontSize: 10, margin: '4px 0' }}>행 클릭 / 팝업</Divider>
+            <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>행 클릭 시 동작</div>
+              <Select size="small" style={{ width: '100%' }} value={(p.rowClickAction as string) ?? 'none'}
+                onChange={v => set('rowClickAction', v)}
+                options={[{value:'none',label:'없음'},{value:'open-popup',label:'팝업 열기'}]} /></div>
+            {((p.rowClickAction as string) === 'open-popup' || p.showRowEdit) && (
+              <div><div style={{ fontSize: 10, color: '#888', marginBottom: 2 }}>팝업 화면 ID (클릭·수정 공용)</div>
+                <Input size="small" value={(p.rowClickTargetScreenId as string) ?? ''} placeholder="예) CONTACT_FORM"
+                  onChange={e => set('rowClickTargetScreenId', e.target.value)} /></div>
+            )}
+
+            {/* 행 액션 버튼 */}
+            <Divider orientation="left" plain style={{ fontSize: 10, margin: '4px 0' }}>행 액션 버튼</Divider>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Switch size="small" checked={!!(p.showRowEdit)} onChange={v => set('showRowEdit', v)} />
+                <Text style={{ fontSize: 12 }}>수정 버튼 (팝업 화면 사용)</Text>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Switch size="small" checked={!!(p.showRowDelete)} onChange={v => set('showRowDelete', v)} />
+                <Text style={{ fontSize: 12 }}>삭제 버튼</Text>
+              </div>
+            </div>
+
+            {/* 검색 및 기능 설정 */}
+            <Divider orientation="left" plain style={{ fontSize: 10, margin: '4px 0' }}>검색 / 기능</Divider>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Switch size="small" checked={!!(p.showExcelDownload)} onChange={v => set('showExcelDownload', v)} />
+                <Text style={{ fontSize: 12 }}>엑셀 다운로드 버튼</Text>
+              </div>
+            </div>
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>검색 필드 (컬럼에서 선택)</div>
+              <Select
+                size="small"
+                mode="multiple"
+                style={{ width: '100%' }}
+                value={(p.searchFields as string[]) ?? []}
+                onChange={v => set('searchFields', v)}
+                options={((p.columns as GridColumn[]) ?? []).map(c => ({ value: c.field, label: c.header }))}
+                placeholder="검색할 컬럼 선택"
+                maxTagCount={2}
+              />
+            </div>
+          </div>
+        </>
+      )}
+      {/* /데이터 그리드 전체 속성 end */}
 
       {/* 구분선 */}
       {el.type === 'divider' && (
@@ -646,13 +999,16 @@ const CanvasDesignerPage: React.FC = () => {
 
   const [elements, setElements] = useState<CanvasElement[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedColIdx, setSelectedColIdx] = useState<number | null>(null)
   const [canvasW, setCanvasW] = useState(420)
   const [canvasH, setCanvasH] = useState(720)
   const [canvasBg, setCanvasBg] = useState('#ffffff')
   const [previewMode, setPreviewMode] = useState(false)
+  const [panelWidth, setPanelWidth] = useState(300)
 
   const dragState = useRef<DragState | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const panelDragRef = useRef<{ startMX: number; startW: number } | null>(null)
 
   // 화면 데이터 로드
   const { data: screen } = useQuery({
@@ -758,6 +1114,7 @@ const CanvasDesignerPage: React.FC = () => {
   // 드래그 시작 (요소 이동)
   const handleElementMouseDown = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
+    if (id !== selectedId) setSelectedColIdx(null)
     setSelectedId(id)
     const el = elements.find(el => el.id === id)!
     dragState.current = {
@@ -782,6 +1139,13 @@ const CanvasDesignerPage: React.FC = () => {
 
   // 마우스 이동 (window 레벨)
   const handleMouseMove = useCallback((e: MouseEvent) => {
+    // 패널 너비 리사이즈
+    if (panelDragRef.current) {
+      const { startMX, startW } = panelDragRef.current
+      const dx = startMX - e.clientX
+      setPanelWidth(Math.max(220, Math.min(600, startW + dx)))
+      return
+    }
     if (!dragState.current || !canvasRef.current) return
     const { type, id, handle, startMX, startMY, startEX, startEY, startEW, startEH } = dragState.current
     const dx = e.clientX - startMX
@@ -807,7 +1171,10 @@ const CanvasDesignerPage: React.FC = () => {
     }))
   }, [])
 
-  const handleMouseUp = useCallback(() => { dragState.current = null }, [])
+  const handleMouseUp = useCallback(() => {
+    dragState.current = null
+    panelDragRef.current = null
+  }, [])
 
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove)
@@ -922,7 +1289,7 @@ const CanvasDesignerPage: React.FC = () => {
               overflow: 'hidden',
               flexShrink: 0,
             }}
-            onClick={e => { if (e.target === canvasRef.current) setSelectedId(null) }}
+            onClick={e => { if (e.target === canvasRef.current) { setSelectedId(null); setSelectedColIdx(null) } }}
           >
             {elements.map(el => (
               <div
@@ -938,7 +1305,12 @@ const CanvasDesignerPage: React.FC = () => {
                 }}
                 onMouseDown={e => handleElementMouseDown(e, el.id)}
               >
-                <ElementPreview el={el} selected={el.id === selectedId} />
+                <ElementPreview
+                  el={el}
+                  selected={el.id === selectedId}
+                  selectedColIdx={el.id === selectedId ? selectedColIdx : null}
+                  onColumnClick={el.id === selectedId ? idx => setSelectedColIdx(idx) : undefined}
+                />
                 {el.id === selectedId && HANDLES.map(h => (
                   <div
                     key={h}
@@ -961,10 +1333,31 @@ const CanvasDesignerPage: React.FC = () => {
           </div>
         </div>
 
+        {/* 우측 패널 리사이즈 핸들 */}
+        <div
+          title="드래그하여 패널 너비 조절"
+          style={{
+            width: 5, flexShrink: 0, cursor: 'col-resize',
+            background: 'transparent', position: 'relative', zIndex: 20,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onMouseDown={e => {
+            e.preventDefault()
+            panelDragRef.current = { startMX: e.clientX, startW: panelWidth }
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#1677ff22' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+        >
+          <div style={{
+            width: 3, height: 40, borderRadius: 3,
+            background: '#d0d0d0', pointerEvents: 'none',
+          }} />
+        </div>
+
         {/* 우측 속성 패널 */}
         <div style={{
-          width: 260, flexShrink: 0, background: '#fff', borderLeft: '1px solid #e8e8e8',
-          overflowY: 'auto',
+          width: panelWidth, flexShrink: 0, background: '#fff',
+          borderLeft: '1px solid #e8e8e8', overflowY: 'auto',
         }}>
           {selectedEl ? (
             <PropsPanel
@@ -972,6 +1365,8 @@ const CanvasDesignerPage: React.FC = () => {
               onChange={handlePropsChange}
               onGeometry={handleGeometryChange}
               onDelete={handleDelete}
+              selectedColIdx={selectedColIdx}
+              onColIdxChange={setSelectedColIdx}
             />
           ) : (
             <div style={{ padding: 16, color: '#bbb', fontSize: 13, textAlign: 'center', marginTop: 40 }}>

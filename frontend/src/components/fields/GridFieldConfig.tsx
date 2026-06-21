@@ -3,6 +3,7 @@ import {
   Modal, Button, Table, Input, Select, InputNumber,
   Space, Popconfirm, Divider, Typography, Switch, Form, Row, Col
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import { PlusOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -128,7 +129,7 @@ export const GridFieldConfig: React.FC<Props> = ({ open, config, onSave, onClose
   }
 
   return (
-    <Modal
+    <ResizableModal
       title="그리드 컬럼 설정"
       open={open}
       onCancel={onClose}
@@ -281,6 +282,6 @@ export const GridFieldConfig: React.FC<Props> = ({ open, config, onSave, onClose
           },
         ]}
       />
-    </Modal>
+    </ResizableModal>
   )
 }

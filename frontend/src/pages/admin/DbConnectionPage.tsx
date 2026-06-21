@@ -4,6 +4,7 @@ import {
   Space, Tag, Tooltip, message, Popconfirm, Alert, Divider, Row, Col,
   Card, Badge, Typography, Tabs, Statistic, Spin
 } from 'antd'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined,
   CheckCircleOutlined, CloseCircleOutlined,
@@ -407,7 +408,7 @@ const DbConnectionPage: React.FC = () => {
       />
 
       {/* 추가/편집 모달 */}
-      <Modal
+      <ResizableModal
         title={editing ? `연결 편집 — ${editing.connName}` : '새 DB 연결 추가'}
         open={open}
         onOk={() => form.submit()}
@@ -555,7 +556,7 @@ const DbConnectionPage: React.FC = () => {
             )}
           </div>
         </Form>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

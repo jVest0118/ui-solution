@@ -1,5 +1,12 @@
 package com.uisolution.platform.site.service;
 
+import com.uisolution.platform.admin.entity.RoleDef;
+import com.uisolution.platform.admin.entity.SiteRoleScreen;
+import com.uisolution.platform.admin.entity.SiteUserRole;
+import com.uisolution.platform.admin.repository.SiteRoleScreenRepository;
+import com.uisolution.platform.admin.repository.SiteUserRoleRepository;
+import com.uisolution.platform.admin.repository.UserRepository;
+import com.uisolution.platform.schema.repository.ScreenDefRepository;
 import com.uisolution.platform.site.entity.SiteConfig;
 import com.uisolution.platform.site.entity.SiteMenu;
 import com.uisolution.platform.site.repository.SiteConfigRepository;
@@ -9,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -17,6 +25,12 @@ public class SiteService {
 
     private final SiteMenuRepository siteMenuRepository;
     private final SiteConfigRepository siteConfigRepository;
+    private final UserRepository userRepository;
+    private final SiteUserRoleRepository siteUserRoleRepository;
+    private final SiteRoleScreenRepository siteRoleScreenRepository;
+    private final ScreenDefRepository screenDefRepository;
+
+    private static final List<String> PRIVILEGED_ROLES = List.of("SYSTEM_ADMIN", "SCREEN_ADMIN", "DEVELOPER");
 
     public List<Map<String, Object>> getMenus(String projectId) {
         return siteMenuRepository
@@ -89,6 +103,63 @@ public class SiteService {
                         .projectId(projectId).siteNm(siteNm).navStyle(navStyle)
                         .build()));
         return configToMap(config);
+    }
+
+    public Map<String, Object> getMyPermissions(String userId, String projectId) {
+        Set<String> platformRoles = userRepository.findActiveUserWithRoles(userId)
+                .map(u -> u.getRoles().stream().map(RoleDef::getRoleId).collect(Collectors.toSet()))
+                .orElse(Set.of());
+
+        boolean isPrivileged = platformRoles.stream().anyMatch(PRIVILEGED_ROLES::contains);
+
+        List<Map<String, Object>> screens;
+        if (isPrivileged) {
+            screens = screenDefRepository.findByProjectIdOrderByScreenNmAsc(projectId).stream()
+                    .map(s -> {
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("screenId", s.getScreenId());
+                        m.put("canRead",   "Y");
+                        m.put("canCreate", "Y");
+                        m.put("canUpdate", "Y");
+                        m.put("canDelete", "Y");
+                        m.put("canExcel",  "Y");
+                        return m;
+                    }).collect(Collectors.toList());
+        } else {
+            List<SiteUserRole> userSiteRoles = siteUserRoleRepository.findByProjectIdAndUserId(projectId, userId);
+            Set<String> roleIds = userSiteRoles.stream()
+                    .map(r -> r.getId().getRoleId()).collect(Collectors.toSet());
+
+            // 여러 역할의 권한을 OR로 병합
+            Map<String, Map<String, String>> permMap = new LinkedHashMap<>();
+            for (String roleId : roleIds) {
+                for (SiteRoleScreen srs : siteRoleScreenRepository.findByIdProjectIdAndIdRoleId(projectId, roleId)) {
+                    String screenId = srs.getId().getScreenId();
+                    permMap.compute(screenId, (k, existing) -> {
+                        Map<String, String> base = existing != null ? existing
+                                : Map.of("canRead","N","canCreate","N","canUpdate","N","canDelete","N","canExcel","N");
+                        Map<String, String> merged = new LinkedHashMap<>(base);
+                        if ("Y".equals(srs.getCanRead()))   merged.put("canRead",   "Y");
+                        if ("Y".equals(srs.getCanCreate())) merged.put("canCreate", "Y");
+                        if ("Y".equals(srs.getCanUpdate())) merged.put("canUpdate", "Y");
+                        if ("Y".equals(srs.getCanDelete())) merged.put("canDelete", "Y");
+                        if ("Y".equals(srs.getCanExcel()))  merged.put("canExcel",  "Y");
+                        return merged;
+                    });
+                }
+            }
+            screens = permMap.entrySet().stream().map(e -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("screenId", e.getKey());
+                m.putAll(e.getValue());
+                return m;
+            }).collect(Collectors.toList());
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("isPrivileged", isPrivileged);
+        result.put("screens", screens);
+        return result;
     }
 
     private Map<String, Object> menuToMap(SiteMenu m) {

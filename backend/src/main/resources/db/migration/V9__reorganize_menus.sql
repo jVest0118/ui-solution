@@ -1,8 +1,10 @@
 -- V9: 관리자 메뉴 구조 재편
 -- 기존 메뉴/권한 전체 초기화 후 새 구조로 재삽입
 
+SET FOREIGN_KEY_CHECKS = 0;
 DELETE FROM role_menu;
 DELETE FROM menu_def;
+SET FOREIGN_KEY_CHECKS = 1;
 
 -- ─────────────────────────────────────────────────────────
 -- 1. UI Solution 관리 (플랫폼 자체 설정 - SYSTEM_ADMIN 전용)

@@ -22,6 +22,9 @@ import UploadSettingsPage from '@/pages/admin/UploadSettingsPage'
 import SiteMenuDesignerPage from '@/pages/admin/SiteMenuDesignerPage'
 import DbConnectionPage from '@/pages/admin/DbConnectionPage'
 import SiteRoleManagementPage from '@/pages/admin/SiteRoleManagementPage'
+import GitManagementPage from '@/pages/admin/GitManagementPage'
+import GitSettingsPage from '@/pages/admin/GitSettingsPage'
+import ContactsPage from '@/pages/contacts/ContactsPage'
 import SiteHomePage from '@/pages/site/SiteHomePage'
 import SitePage from '@/pages/site/SitePage'
 import { ScreenRenderer } from '@/components/renderer/ScreenRenderer'
@@ -54,7 +57,14 @@ const ScreenRendererPage: React.FC = () => {
 const App: React.FC = () => (
   <AgGridProvider modules={[AllCommunityModule]}>
   <QueryClientProvider client={queryClient}>
-    <ConfigProvider locale={koKR}>
+    <ConfigProvider locale={koKR} theme={{
+      token: {
+        colorPrimary: '#6366f1',
+        colorLink: '#6366f1',
+        borderRadius: 8,
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif",
+      },
+    }}>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -80,6 +90,9 @@ const App: React.FC = () => (
             <Route path="admin/site/users"      element={<UserManagementPage />} />
             <Route path="admin/site/roles"      element={<SiteRoleManagementPage />} />
             <Route path="admin/datasource"      element={<DbConnectionPage />} />
+            <Route path="admin/git"             element={<GitManagementPage />} />
+            <Route path="admin/git/settings"    element={<GitSettingsPage />} />
+            <Route path="contacts"              element={<ContactsPage />} />
 
             {/* 화면설계 */}
             <Route path="admin/screens"              element={<ScreenListPage />} />

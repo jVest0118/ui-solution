@@ -61,26 +61,22 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- DB - H2 파일모드 (개발용, 설치 불필요) -->
-        <!-- PostgreSQL로 전환 시: 이 블록을 주석처리하고 아래 PostgreSQL 블록 활성화 -->
+        <!-- DB - H2 (테스트 전용) -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <scope>test</scope>
         </dependency>
-
-        <!-- DB - PostgreSQL (운영 전환 시 활성화)
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-        -->
 
         <!-- DB Migration -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
+        </dependency>
+        <!-- Flyway MySQL 지원 모듈 (Flyway 9+ 필수) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
         </dependency>
 
         <!-- JDBC Drivers (연결 테스트용) -->
@@ -98,6 +94,13 @@
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- JGit (Git 형상관리 연동) -->
+        <dependency>
+            <groupId>org.eclipse.jgit</groupId>
+            <artifactId>org.eclipse.jgit</artifactId>
+            <version>6.7.0.202309050840-r</version>
         </dependency>
 
         <!-- Lombok -->

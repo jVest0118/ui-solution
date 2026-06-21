@@ -6,6 +6,7 @@ export type FieldType =
   | 'file' | 'popup' | 'grid' | 'editor'
   | 'date-range' | 'info-banner' | 'stat-card'
   | 'address' | 'phone'
+  | 'display'
   | 'canvas-section'
 
 export type ScreenType = 'form' | 'grid' | 'master-detail' | 'popup' | 'composite' | 'dashboard' | 'report' | 'canvas'
@@ -13,10 +14,24 @@ export type ScreenType = 'form' | 'grid' | 'master-detail' | 'popup' | 'composit
 // ─── 캔버스 자유 배치형 ───────────────────────────────────────
 export type CanvasElementType =
   | 'heading' | 'paragraph'
-  | 'text-input' | 'split-input'
+  | 'text-input' | 'split-input' | 'select-input'
   | 'address-input' | 'phone-input' | 'date-input'
   | 'button' | 'divider' | 'checkbox-group'
   | 'user-profile'
+  | 'data-grid'
+
+export interface GridColumn {
+  field: string
+  header: string
+  width?: number
+}
+
+export interface ToolbarButton {
+  label: string
+  buttonType: 'primary' | 'default' | 'danger'
+  action: 'open-popup' | 'refresh' | 'custom'
+  targetScreenId?: string
+}
 
 export interface SplitPart {
   fieldNm: string
@@ -52,11 +67,26 @@ export interface CanvasElement {
     required?: boolean
     // split-input
     parts?: SplitPart[]
-    // checkbox-group
+    // checkbox-group / select-input
     options?: { value: string; label: string; required?: boolean }[]
     // button
     buttonType?: 'primary' | 'default' | 'danger'
-    action?: 'submit' | 'reset'
+    action?: 'submit' | 'reset' | 'close' | 'open-popup' | 'navigate'
+    targetScreenId?: string
+    navigatePath?: string
+    // data-grid
+    apiEndpoint?: string
+    columns?: GridColumn[]
+    toolbarButtons?: ToolbarButton[]
+    rowClickAction?: 'none' | 'open-popup'
+    rowClickTargetScreenId?: string
+    searchFields?: string[]
+    gridHeight?: number
+    pageSize?: number
+    showRowEdit?: boolean
+    showRowDelete?: boolean
+    // select-input / checkbox-group (merge)
+    codeGroup?: string
     // divider
     dividerColor?: string
     thickness?: number
@@ -138,6 +168,7 @@ export interface FieldDef {
   colPos: number
   readonly: boolean
   hidden: boolean
+  useYn?: string
   codeGroup?: string
   popupScreenId?: string
   extraConfig?: Record<string, unknown>
@@ -147,9 +178,14 @@ export interface FieldDef {
 export interface ScreenSection {
   id: string
   type: 'form' | 'grid' | 'editor' | 'canvas'
+  role?: 'master' | 'detail' | 'independent'  // master: 행 선택 발행 / detail: 마스터 데이터 수신
+  masterSectionId?: string                     // role='detail' 일 때 연결할 master 섹션 id
+  screenId?: string                            // 별도 화면(다른 테이블) 연결 시 해당 screenId
+  linkField?: string                           // screenId 연결 시 master→detail 조인 필드명
   title?: string
-  fieldIds?: number[]      // form/editor 섹션 전용: 해당 섹션에 속하는 fieldId 목록 (미지정 시 모든 필드)
-  canvasConfig?: CanvasConfig  // canvas 섹션 전용: 자유 배치 캔버스 설정
+  height?: number          // grid 섹션 높이(px), 기본 300
+  fieldIds?: number[]      // 섹션에 표시할 fieldId 목록 (미지정 시 전체, screenId 없을 때만 사용)
+  canvasConfig?: CanvasConfig
 }
 
 export type OpenType = 'page' | 'tab' | 'popup'
@@ -177,6 +213,10 @@ export interface ScreenSchema {
   buttonConfig?: Record<string, unknown>
   version: number
   openType?: OpenType
+  datasourceType?: string   // 'biz_data' | 'external_table' | 'sql' 등
+  tableNm?: string          // 외부 테이블명
+  pkColumn?: string         // PK 컬럼명 (복합 PK는 콤마 구분: "col1,col2")
+  dbConnId?: string         // DB 연결 ID
   fields: FieldDef[]
   // 권한
   canRead: boolean

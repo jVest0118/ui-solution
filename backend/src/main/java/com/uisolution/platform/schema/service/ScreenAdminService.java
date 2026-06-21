@@ -37,30 +37,81 @@ public class ScreenAdminService {
                     m.put("apiResource", s.getApiResource());
                     m.put("version",     s.getVersion());
                     m.put("projectId",   s.getProjectId());
+                    m.put("editStatus",  s.getEditStatus() != null ? s.getEditStatus() : "COMMITTED");
+                    m.put("lastEditor",  s.getLastEditor());
+                    m.put("lockedBy",    s.getLockedBy());
                     return m;
                 })
                 .collect(Collectors.toList());
     }
 
     @Transactional
+    public Map<String, Object> lockScreen(String screenId, String userId) {
+        ScreenDef screen = screenDefRepository.findById(screenId)
+                .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
+
+        String lockedBy = screen.getLockedBy();
+        if (lockedBy != null && !lockedBy.equals(userId)) {
+            throw new IllegalStateException(lockedBy + " 님이 작업 중입니다. 잠금을 해제할 수 없습니다.");
+        }
+        screen.lock(userId);
+        return Map.of("editStatus", "EDITING", "lockedBy", userId);
+    }
+
+    @Transactional
+    public Map<String, Object> unlockScreen(String screenId, String userId) {
+        ScreenDef screen = screenDefRepository.findById(screenId)
+                .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
+        screen.unlock(userId);
+        return Map.of("editStatus", "DONE", "lastEditor", userId);
+    }
+
+    @Transactional
+    public Map<String, Object> markCommitted(String screenId) {
+        ScreenDef screen = screenDefRepository.findById(screenId)
+                .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
+        screen.markCommitted();
+        return Map.of("editStatus", "COMMITTED");
+    }
+
+    @Transactional
+    public int bulkMarkCommitted() {
+        List<ScreenDef> doneScreens = screenDefRepository.findAll().stream()
+                .filter(s -> "DONE".equals(s.getEditStatus()) || "EDITING".equals(s.getEditStatus()))
+                .collect(Collectors.toList());
+        doneScreens.forEach(ScreenDef::markCommitted);
+        return doneScreens.size();
+    }
+
+    @Transactional
     public Map<String, Object> saveScreen(Map<String, Object> req, String userId) {
-        String screenId    = (String) req.get("screenId");
-        String screenNm    = (String) req.get("screenNm");
-        String screenType  = (String) req.get("screenType");
-        String description = (String) req.get("description");
-        String apiResource = (String) req.get("apiResource");
-        String layoutConfig = (String) req.get("layoutConfig");
-        String buttonConfig = (String) req.get("buttonConfig");
-        String projectId   = (String) req.get("projectId");
-        String openType    = (String) req.getOrDefault("openType", "page");
+        String screenId       = (String) req.get("screenId");
+        String screenNm       = (String) req.get("screenNm");
+        String screenType     = (String) req.get("screenType");
+        String description    = (String) req.get("description");
+        String apiResource    = (String) req.get("apiResource");
+        String layoutConfig   = (String) req.get("layoutConfig");
+        String buttonConfig   = (String) req.get("buttonConfig");
+        String projectId      = (String) req.get("projectId");
+        String openType       = (String) req.getOrDefault("openType", "page");
+        String datasourceType = (String) req.getOrDefault("datasourceType", "biz_data");
+        String tableNm        = (String) req.get("tableNm");
+        String pkColumn       = (String) req.getOrDefault("pkColumn", "id");
+        String dbConnId       = (String) req.get("dbConnId");
 
         ScreenDef screen = screenDefRepository.findById(screenId)
-                .map(s -> { s.update(screenNm, screenType, description, apiResource, layoutConfig, buttonConfig, openType); return s; })
+                .map(s -> {
+                    s.update(screenNm, screenType, description, apiResource, layoutConfig, buttonConfig, openType,
+                             datasourceType, tableNm, pkColumn, dbConnId);
+                    return screenDefRepository.save(s);  // 명시적 save — dirty checking 미적용 환경 대응
+                })
                 .orElseGet(() -> screenDefRepository.save(ScreenDef.builder()
                         .screenId(screenId).screenNm(screenNm).screenType(screenType)
                         .description(description).apiResource(apiResource)
                         .layoutConfig(layoutConfig).buttonConfig(buttonConfig)
                         .projectId(projectId).useYn("Y").openType(openType)
+                        .datasourceType(datasourceType).tableNm(tableNm).pkColumn(pkColumn).dbConnId(dbConnId)
+                        .lastEditor(userId).editStatus("DONE")
                         .build()));
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -80,9 +131,13 @@ public class ScreenAdminService {
         result.put("apiResource", screen.getApiResource());
         result.put("layoutConfig", screen.getLayoutConfig());
         result.put("buttonConfig", screen.getButtonConfig());
-        result.put("projectId",   screen.getProjectId());
-        result.put("openType",    screen.getOpenType() != null ? screen.getOpenType() : "page");
-        result.put("version",     screen.getVersion());
+        result.put("projectId",      screen.getProjectId());
+        result.put("openType",       screen.getOpenType() != null ? screen.getOpenType() : "page");
+        result.put("datasourceType", screen.getDatasourceType() != null ? screen.getDatasourceType() : "biz_data");
+        result.put("tableNm",        screen.getTableNm());
+        result.put("pkColumn",       screen.getPkColumn() != null ? screen.getPkColumn() : "id");
+        result.put("dbConnId",       screen.getDbConnId());
+        result.put("version",        screen.getVersion());
         result.put("fields", screen.getFields().stream()
                 .sorted(Comparator.comparingInt(FieldDef::getRowPos).thenComparingInt(FieldDef::getColPos))
                 .map(this::fieldToMap).collect(Collectors.toList()));
@@ -138,9 +193,15 @@ public class ScreenAdminService {
 
     @Transactional
     public void deleteField(String screenId, Long fieldId) {
-        ScreenDef screen = screenDefRepository.findWithFieldsAndRules(screenId)
-                .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
-        screen.getFields().removeIf(f -> f.getFieldId().equals(fieldId));
+        // JPA 고아 삭제(orphanRemoval) 대신 명시적 삭제 순서 제어
+        // 1단계: FK 제약을 위해 validation_rule 먼저 삭제
+        fieldDefRepository.deleteValidationRulesByFieldId(fieldId);
+        // 2단계: 필드 삭제 (screenId 검증 포함)
+        int deleted = fieldDefRepository.deleteByFieldIdAndScreenId(fieldId, screenId);
+        if (deleted == 0) {
+            throw new IllegalArgumentException(
+                    String.format("필드를 찾을 수 없습니다 (screenId=%s, fieldId=%d)", screenId, fieldId));
+        }
     }
 
     @Transactional
@@ -182,7 +243,9 @@ public class ScreenAdminService {
         m.put("colPos",     f.getColPos());
         m.put("readonlyYn", f.getReadonlyYn());
         m.put("hiddenYn",   f.getHiddenYn());
+        m.put("useYn",      f.getUseYn() != null ? f.getUseYn() : "Y");
         m.put("codeGroup",  f.getCodeGroup());
+        m.put("columnNm",   f.getColumnNm());
         m.put("extraConfig", parseJson(f.getExtraConfig()));
         m.put("validationRules", f.getValidationRules().stream().map(r -> {
             Map<String, Object> rm = new LinkedHashMap<>();
@@ -227,7 +290,9 @@ public class ScreenAdminService {
                 .colPos(getInt(req, "colPos", 0))
                 .readonlyYn((String) req.getOrDefault("readonlyYn", "N"))
                 .hiddenYn((String) req.getOrDefault("hiddenYn", "N"))
+                .useYn((String) req.getOrDefault("useYn", "Y"))
                 .codeGroup((String) req.get("codeGroup"))
+                .columnNm((String) req.get("columnNm"))
                 .extraConfig(toJson(req.get("extraConfig")))
                 .build();
     }
@@ -244,10 +309,12 @@ public class ScreenAdminService {
                 getInt(req, "sortOrder", f.getSortOrder()),
                 (String) req.getOrDefault("readonlyYn", f.getReadonlyYn()),
                 (String) req.getOrDefault("hiddenYn", f.getHiddenYn()),
+                (String) req.getOrDefault("useYn", f.getUseYn() != null ? f.getUseYn() : "Y"),
                 (String) req.get("codeGroup"),
                 req.containsKey("extraConfig") ? toJson(req.get("extraConfig")) : f.getExtraConfig(),
                 getInt(req, "rowPos", f.getRowPos()),
-                getInt(req, "colPos", f.getColPos())
+                getInt(req, "colPos", f.getColPos()),
+                req.containsKey("columnNm") ? (String) req.get("columnNm") : f.getColumnNm()
         );
     }
 

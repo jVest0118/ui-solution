@@ -102,4 +102,33 @@ public class SchemaController {
             @RequestParam(required = false) String q) {
         return ApiResponse.ok(screenAdminService.getFieldLabelSuggestions(q));
     }
+
+    // ─── 협업 편집 상태 관리 ──────────────────────────────────
+
+    /** 화면 잠금 (EDITING) — 설계 페이지 진입 시 호출 */
+    @PostMapping("/admin/screens/{screenId}/lock")
+    public ApiResponse<Map<String, Object>> lockScreen(@PathVariable String screenId) {
+        String userId = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ApiResponse.ok(screenAdminService.lockScreen(screenId, userId));
+    }
+
+    /** 화면 잠금 해제 (DONE) — 설계 페이지 이탈 시 호출 */
+    @PostMapping("/admin/screens/{screenId}/unlock")
+    public ApiResponse<Map<String, Object>> unlockScreen(@PathVariable String screenId) {
+        String userId = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ApiResponse.ok(screenAdminService.unlockScreen(screenId, userId));
+    }
+
+    /** 단일 화면 COMMITTED 표시 */
+    @PostMapping("/admin/screens/{screenId}/commit-status")
+    public ApiResponse<Map<String, Object>> markCommitted(@PathVariable String screenId) {
+        return ApiResponse.ok(screenAdminService.markCommitted(screenId));
+    }
+
+    /** Git push 성공 후 모든 DONE/EDITING 화면을 COMMITTED로 일괄 전환 */
+    @PostMapping("/admin/screens/bulk-commit")
+    public ApiResponse<Map<String, Object>> bulkCommit() {
+        int count = screenAdminService.bulkMarkCommitted();
+        return ApiResponse.ok(Map.of("count", count, "message", count + "개 화면이 COMMITTED 처리되었습니다."));
+    }
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Tag, message, Typography, Row, Col, Card } from 'antd'
 import { PlusOutlined, EditOutlined } from '@ant-design/icons'
+import { ResizableModal } from '@/components/ui/ResizableModal'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/api/axios'
 
@@ -79,23 +80,23 @@ const CodeManagementPage: React.FC = () => {
         </Col>
       </Row>
 
-      <Modal title="코드그룹 등록/수정" open={groupOpen} onOk={() => groupForm.submit()} onCancel={() => setGroupOpen(false)} okText="저장">
+      <ResizableModal title="코드그룹 등록/수정" open={groupOpen} onOk={() => groupForm.submit()} onCancel={() => setGroupOpen(false)} okText="저장">
         <Form form={groupForm} layout="vertical" onFinish={saveGroupMutation.mutate}>
           <Form.Item name="groupCd" label="그룹코드" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="groupNm" label="그룹명" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="설명"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="useYn" label="사용여부" initialValue="Y"><Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} /></Form.Item>
         </Form>
-      </Modal>
+      </ResizableModal>
 
-      <Modal title="코드상세 등록/수정" open={detailOpen} onOk={() => detailForm.submit()} onCancel={() => setDetailOpen(false)} okText="저장">
+      <ResizableModal title="코드상세 등록/수정" open={detailOpen} onOk={() => detailForm.submit()} onCancel={() => setDetailOpen(false)} okText="저장">
         <Form form={detailForm} layout="vertical" onFinish={saveDetailMutation.mutate}>
           <Form.Item name="codeVal" label="코드값" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="codeNm" label="코드명" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="sortOrder" label="순서" initialValue={0}><InputNumber style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="useYn" label="사용여부" initialValue="Y"><Select options={[{ value: 'Y', label: '사용' }, { value: 'N', label: '미사용' }]} /></Form.Item>
         </Form>
-      </Modal>
+      </ResizableModal>
     </div>
   )
 }

@@ -3,6 +3,7 @@ package com.uisolution.platform.site.controller;
 import com.uisolution.platform.common.dto.ApiResponse;
 import com.uisolution.platform.site.service.SiteService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -14,6 +15,13 @@ import java.util.Map;
 public class SiteController {
 
     private final SiteService siteService;
+
+    /** 현재 사용자의 화면 접근 권한 (런타임 접근 제어용) */
+    @GetMapping("/my-permissions")
+    public ApiResponse<Map<String, Object>> getMyPermissions(@RequestParam String projectId) {
+        String userId = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ApiResponse.ok(siteService.getMyPermissions(userId, projectId));
+    }
 
     /** 사이트 메뉴 목록 (인증된 사용자 누구나) */
     @GetMapping("/menus")

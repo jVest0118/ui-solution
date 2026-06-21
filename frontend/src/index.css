@@ -1,2 +1,82 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f1f5f9;
+}
+
+/* ── Premium scrollbar ─────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.18); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.28); }
+
+/* ── QSpinner ─────────────────────────────────────────────── */
+@keyframes q-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes q-blur-pulse {
+  0%, 100% {
+    filter: blur(5px);
+    opacity: 0.3;
+    text-shadow: none;
+    transform: scale(0.9);
+  }
+  50% {
+    filter: blur(0px);
+    opacity: 1;
+    text-shadow:
+      0 0 12px rgba(22, 119, 255, 0.9),
+      0 0 28px rgba(22, 119, 255, 0.5),
+      0 0 50px rgba(22, 119, 255, 0.2);
+    transform: scale(1.05);
+  }
+}
+
+@keyframes q-ring-glow {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.55; }
+}
+
+/* ── Responsive Utilities ──────────────────────────────────── */
+
+/* 수평 스크롤 완전 차단 */
+html, body { overflow-x: hidden; max-width: 100vw; }
+.ant-layout { overflow-x: hidden; }
+
+/* 셀렉트 선택값 말줄임 */
+.ant-select-selection-item {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* number 필드 입력값 우측 정렬 */
+.field-number-right input.ant-input-number-input {
+  text-align: right;
+}
+
+/* 로그인 브랜딩 패널 */
+.login-brand-panel { display: flex !important; }
+
+@media (max-width: 767px) {
+  /* 로그인 페이지: 좌측 브랜딩 패널 숨김 */
+  .login-brand-panel { display: none !important; }
+
+  /* 페이지 패딩 축소 */
+  .rsp-page-content { padding: 12px !important; }
+
+  /* 모달 전체 너비 */
+  .ant-modal { max-width: 95vw !important; width: 95vw !important; margin: 10px auto !important; }
+  .ant-modal-content { padding: 16px !important; }
+
+  /* 테이블: 가로 스크롤 없이 셀 패딩 최소화 */
+  .ant-table-cell { padding: 8px 6px !important; }
+  .ant-table-wrapper { width: 100% !important; overflow: hidden !important; }
+}
+
+@media (max-width: 575px) {
+  .rsp-page-content { padding: 8px !important; }
+}
