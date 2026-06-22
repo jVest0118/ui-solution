@@ -40,6 +40,19 @@ public class SchemaController {
         return ApiResponse.ok(screenAdminService.getAllScreens(projectId));
     }
 
+    @GetMapping("/admin/screens/groups")
+    public ApiResponse<List<String>> getScreenGroups(
+            @RequestParam(required = false) String projectId) {
+        return ApiResponse.ok(screenAdminService.getAllGroups(projectId));
+    }
+
+    @PatchMapping("/admin/screens/{screenId}/group")
+    public ApiResponse<Map<String, Object>> updateScreenGroup(
+            @PathVariable String screenId,
+            @RequestBody Map<String, String> body) {
+        return ApiResponse.ok(screenAdminService.updateScreenGroup(screenId, body.get("screenGroup")));
+    }
+
     @PostMapping("/admin/screens")
     public ApiResponse<Map<String, Object>> saveScreen(@RequestBody Map<String, Object> req) {
         String currentUser = SecurityContextHolder.getContext().getAuthentication().getName();

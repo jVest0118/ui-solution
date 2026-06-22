@@ -24,6 +24,10 @@ import DbConnectionPage from '@/pages/admin/DbConnectionPage'
 import SiteRoleManagementPage from '@/pages/admin/SiteRoleManagementPage'
 import GitManagementPage from '@/pages/admin/GitManagementPage'
 import GitSettingsPage from '@/pages/admin/GitSettingsPage'
+import PageComposerPage from '@/pages/admin/PageComposerPage'
+import PageViewPage from '@/pages/admin/PageViewPage'
+import ApiConnectionPage from '@/pages/admin/ApiConnectionPage'
+import ApiStatusPage from '@/pages/admin/ApiStatusPage'
 import ContactsPage from '@/pages/contacts/ContactsPage'
 import SiteHomePage from '@/pages/site/SiteHomePage'
 import SitePage from '@/pages/site/SitePage'
@@ -99,6 +103,14 @@ const App: React.FC = () => (
             <Route path="admin/screens/new"          element={<ScreenDesignPage />} />
             <Route path="admin/screens/:screenId"    element={<ScreenDesignPage />} />
             <Route path="admin/codes"                element={<CodeManagementPage />} />
+
+            {/* 페이지 구성 (컴포저) */}
+            <Route path="admin/page-composer"        element={<PageComposerPage />} />
+            <Route path="page-view/:pageId"          element={<PageViewPage />} />
+
+            {/* 연계API */}
+            <Route path="admin/api-connections"      element={<ApiConnectionPage />} />
+            <Route path="admin/api-status"           element={<ApiStatusPage />} />
 
             {/* 업무화면 - 런타임 렌더러 (관리자 레이아웃) */}
             <Route path="app/:screenId" element={<ScreenRendererPage />} />

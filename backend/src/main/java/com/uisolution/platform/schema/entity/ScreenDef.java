@@ -77,6 +77,9 @@ public class ScreenDef extends BaseEntity {
     @Column(name = "db_conn_id", length = 50)
     private String dbConnId;
 
+    @Column(name = "screen_group", length = 200)
+    private String screenGroup;
+
     @OneToMany(mappedBy = "screenDef", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("sortOrder ASC")
     @Builder.Default
@@ -117,5 +120,9 @@ public class ScreenDef extends BaseEntity {
         this.editStatus = "COMMITTED";
         this.lockedBy   = null;
         this.lockedAt   = null;
+    }
+
+    public void updateGroup(String screenGroup) {
+        this.screenGroup = screenGroup;
     }
 }

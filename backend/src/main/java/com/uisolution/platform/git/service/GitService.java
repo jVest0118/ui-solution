@@ -10,6 +10,9 @@ import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.lib.*;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.transport.PushResult;
+import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -117,12 +120,43 @@ public class GitService {
 
     public Map<String, Object> push() throws Exception {
         GitConfig cfg = requireConfig();
+
+        if (cfg.getRemoteUrl() == null || cfg.getRemoteUrl().isBlank())
+            throw new IllegalStateException("원격 저장소 URL이 설정되지 않았습니다. Git 설정 페이지에서 저장해 주세요.");
+        if (cfg.getAccessToken() == null || cfg.getAccessToken().isBlank())
+            throw new IllegalStateException("Access Token이 설정되지 않았습니다. Git 설정 페이지에서 토큰을 다시 입력해 저장해 주세요.");
+
         try (Git git = openGit(cfg)) {
-            git.push()
-               .setCredentialsProvider(creds(cfg))
-               .setRemote("origin")
-               .call();
-            return Map.of("success", true, "message", "Push 완료");
+            String branch = cfg.getBranch() != null && !cfg.getBranch().isBlank()
+                    ? cfg.getBranch()
+                    : git.getRepository().getBranch();
+
+            // HTTPS URL에 토큰을 직접 임베드 — JGit CredentialsProvider보다 안정적
+            String remoteUrl = buildAuthUrl(cfg);
+            log.info("Push → branch={}", branch);
+
+            Iterable<PushResult> results = git.push()
+                    .setCredentialsProvider(creds(cfg))
+                    .setRemote(remoteUrl)
+                    .setRefSpecs(new RefSpec("refs/heads/" + branch + ":refs/heads/" + branch))
+                    .call();
+
+            // 결과 상태 확인
+            List<String> errors = new ArrayList<>();
+            for (PushResult pr : results) {
+                for (RemoteRefUpdate rru : pr.getRemoteUpdates()) {
+                    RemoteRefUpdate.Status st = rru.getStatus();
+                    if (st != RemoteRefUpdate.Status.OK && st != RemoteRefUpdate.Status.UP_TO_DATE) {
+                        String detail = rru.getMessage() != null ? rru.getMessage() : st.name();
+                        errors.add(rru.getRemoteName() + ": " + detail);
+                    }
+                }
+            }
+
+            if (!errors.isEmpty()) {
+                return Map.of("success", false, "message", "Push 실패: " + String.join(", ", errors));
+            }
+            return Map.of("success", true, "message", "Push 완료 (브랜치: " + branch + ")");
         }
     }
 
@@ -287,6 +321,22 @@ public class GitService {
         return new UsernamePasswordCredentialsProvider(
                 cfg.getUsername() != null ? cfg.getUsername() : "",
                 cfg.getAccessToken() != null ? cfg.getAccessToken() : "");
+    }
+
+    /**
+     * HTTPS URL에 토큰을 직접 임베드하여 반환.
+     * JGit CredentialsProvider 단독 사용 시 GitHub에서 403이 발생하는 경우의 대안.
+     * 예: https://github.com/user/repo → https://TOKEN@github.com/user/repo
+     */
+    private String buildAuthUrl(GitConfig cfg) {
+        String url   = cfg.getRemoteUrl().trim();
+        String token = cfg.getAccessToken();
+        if (token == null || token.isBlank() || !url.startsWith("https://"))
+            return url;
+        // 이미 자격증명이 포함된 URL이면 그대로 반환
+        if (url.startsWith("https://") && url.contains("@"))
+            return url;
+        return "https://" + token + "@" + url.substring("https://".length());
     }
 
     private void addFiles(List<Map<String, String>> list, Set<String> paths, String statusLabel) {

@@ -40,8 +40,29 @@ public class ScreenAdminService {
                     m.put("editStatus",  s.getEditStatus() != null ? s.getEditStatus() : "COMMITTED");
                     m.put("lastEditor",  s.getLastEditor());
                     m.put("lockedBy",    s.getLockedBy());
+                    m.put("createdAt",   s.getCreatedAt());
+                    m.put("screenGroup", s.getScreenGroup());
                     return m;
                 })
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public Map<String, Object> updateScreenGroup(String screenId, String screenGroup) {
+        ScreenDef screen = screenDefRepository.findById(screenId)
+                .orElseThrow(() -> new IllegalArgumentException("화면을 찾을 수 없습니다: " + screenId));
+        screen.updateGroup(screenGroup == null || screenGroup.isBlank() ? null : screenGroup.trim());
+        return Map.of("screenId", screenId, "screenGroup", screen.getScreenGroup() != null ? screen.getScreenGroup() : "");
+    }
+
+    public List<String> getAllGroups(String projectId) {
+        return screenDefRepository.findAll().stream()
+                .filter(s -> "Y".equals(s.getUseYn()))
+                .filter(s -> projectId == null || projectId.equals(s.getProjectId()))
+                .map(ScreenDef::getScreenGroup)
+                .filter(g -> g != null && !g.isBlank())
+                .distinct()
+                .sorted()
                 .collect(Collectors.toList());
     }
 

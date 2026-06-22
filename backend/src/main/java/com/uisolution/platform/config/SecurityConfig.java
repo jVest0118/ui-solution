@@ -50,6 +50,8 @@ public class SecurityConfig {
                 .requestMatchers("/site/config").authenticated()
                 .requestMatchers("/site/my-permissions").authenticated()
                 .requestMatchers("/site/**").hasAnyAuthority("SYSTEM_ADMIN", "SCREEN_ADMIN")
+                .requestMatchers("/api-conn/**").hasAnyAuthority("SYSTEM_ADMIN", "SCREEN_ADMIN", "DEVELOPER")
+                .requestMatchers("/page-def/**").authenticated()
                 .requestMatchers("/biz/**").authenticated()
                 .requestMatchers("/contacts/**").authenticated()
                 .anyRequest().authenticated()
@@ -75,7 +77,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOriginPatterns(List.of("*"));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
 

@@ -52,7 +52,9 @@ public class GitConfig {
         this.repoPath       = repoPath;
         this.remoteUrl      = remoteUrl;
         this.username       = username;
-        if (accessToken != null && !accessToken.isBlank()) this.accessToken = accessToken;
+        // 빈 값이거나 마스킹 문자(••••)면 기존 토큰 유지
+        if (accessToken != null && !accessToken.isBlank() && !accessToken.contains("•"))
+            this.accessToken = accessToken;
         this.branch         = branch != null ? branch : "main";
         this.autoRestart    = "Y".equals(autoRestart) ? "Y" : "N";
         this.restartCommand = restartCommand;
